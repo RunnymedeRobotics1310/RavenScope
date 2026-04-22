@@ -29,6 +29,7 @@ export default defineWorkersConfig(async () => {
             compatibilityDate: "2026-04-17",
             compatibilityFlags: ["nodejs_compat"],
             d1Databases: ["DB"],
+            r2Buckets: ["BLOBS"],
             durableObjects: {
               SESSION_INGEST_DO: { className: "SessionIngestDO", useSQLite: true },
               RATE_LIMIT_DO: { className: "RateLimitDO", useSQLite: true },

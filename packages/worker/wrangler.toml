@@ -29,10 +29,15 @@ database_name = "ravenscope"
 database_id = "REPLACE_ME_AFTER_wrangler_d1_create"
 migrations_dir = "migrations"
 
+[[r2_buckets]]
+binding = "BLOBS"
+bucket_name = "ravenscope-blobs"
+# preview_bucket_name is only required for `wrangler dev --remote`; local dev
+# synthesizes an in-memory R2 bucket.
+
 [vars]
 EMAIL_FROM = "no-reply@ravenscope.example.com"
 
-# R2 bindings arrive in Unit 5.
 # Secrets (set via `wrangler secret put`):
 #   SESSION_SECRET — JSON map {"v1":"<32-byte-base64>"}
 #   RESEND_API_KEY

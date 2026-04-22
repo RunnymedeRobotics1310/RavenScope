@@ -2,6 +2,7 @@ import { Hono } from "hono"
 import { httpsOnly } from "./auth/https-only"
 import { apiKeyRoutes } from "./routes/api-keys"
 import { authRoutes } from "./routes/auth"
+import { telemetryRoutes } from "./routes/telemetry"
 import type { Env } from "./env"
 
 export { SessionIngestDO } from "./ingest-do/session-ingest-do"
@@ -14,6 +15,7 @@ app.use("*", httpsOnly)
 app.get("/api/health", (c) => c.json({ ok: true }))
 app.route("/api/auth", authRoutes)
 app.route("/api/keys", apiKeyRoutes)
+app.route("/api/telemetry", telemetryRoutes)
 
 export default {
   fetch: app.fetch,
