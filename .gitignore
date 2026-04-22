@@ -13,3 +13,4 @@ coverage/
 # Vite writes transient timestamp files next to config files during dev.
 vite.config.ts.timestamp-*.mjs
 vite.config.js.timestamp-*.mjs
+package-lock.json
