@@ -19,10 +19,16 @@ class_name = "SessionIngestDO"
 tag = "v1"
 new_classes = ["SessionIngestDO"]
 
+[[d1_databases]]
+binding = "DB"
+database_name = "ravenscope"
+database_id = "REPLACE_ME_AFTER_wrangler_d1_create"
+migrations_dir = "migrations"
+
 [vars]
 EMAIL_FROM = "no-reply@ravenscope.example.com"
 
-# D1 + R2 bindings arrive in Unit 2 / Unit 5.
+# R2 bindings arrive in Unit 5.
 # Secrets (set via `wrangler secret put`):
 #   SESSION_SECRET — JSON map {"v1":"<32-byte-base64>"}
 #   RESEND_API_KEY
