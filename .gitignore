@@ -9,3 +9,7 @@ coverage/
 .DS_Store
 .vscode/
 .idea/
+
+# Vite writes transient timestamp files next to config files during dev.
+vite.config.ts.timestamp-*.mjs
+vite.config.js.timestamp-*.mjs
