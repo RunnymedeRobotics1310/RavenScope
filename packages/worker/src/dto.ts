@@ -96,3 +96,68 @@ export interface TelemetrySessionResponse {
   playoffRound: string | null
   fmsEventName: string | null
 }
+
+/* --- Web-UI sessions (Unit 6) -------------------------------------- */
+
+export type SessionListSort = "started_at" | "fms_event_name" | "match_label"
+export type SessionListOrder = "asc" | "desc"
+
+export interface SessionListQuery {
+  q?: string
+  sort?: SessionListSort
+  order?: SessionListOrder
+  cursor?: string
+  limit?: number
+}
+
+export interface SessionListItem {
+  id: string
+  sessionId: string
+  teamNumber: number
+  startedAt: string
+  endedAt: string | null
+  entryCount: number
+  uploadedCount: number
+  fmsEventName: string | null
+  matchLabel: string | null
+  lastBatchAt: string | null
+  wpilogGeneratedAt: string | null
+}
+
+export interface SessionListResponse {
+  items: SessionListItem[]
+  nextCursor: string | null
+}
+
+export interface SessionDetail extends SessionListItem {
+  robotIp: string
+  createdAt: string
+  tournamentId: string | null
+  matchLevel: string | null
+  matchNumber: number | null
+  playoffRound: string | null
+  batchCount: number
+  wpilogKey: string | null
+}
+
+export interface KeyTreeNode {
+  /** Full path to this node (e.g. "/SmartDashboard/Drivetrain/Pose"). */
+  path: string
+  /** Last segment only (e.g. "Pose"). */
+  name: string
+  children: KeyTreeNode[]
+  // Present only when this node has recorded samples (a "leaf" in NT terms).
+  // NT allows a key to be both a branch and a leaf, so these are independent
+  // of `children.length`.
+  ntType?: string
+  sampleCount?: number
+  firstTs?: string
+  lastTs?: string
+}
+
+export interface KeyTreeResponse {
+  nodes: KeyTreeNode[]
+  totalKeys: number
+  malformedLines: number
+  generatedAt: string
+}

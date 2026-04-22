@@ -66,57 +66,67 @@ export class SessionIngestDO implements DurableObject {
   private async handleData(request: Request): Promise<Response> {
     const body = (await request.json()) as IngestDataRequest
     const { sessionDbId, entries } = body
-    await this.bindSessionId(sessionDbId)
 
     if (entries.length === 0) {
+      await this.bindSessionId(sessionDbId)
       return Response.json({ count: 0 } satisfies { count: number })
     }
 
-    const db = createDb(this.env)
-    await this.hydrateSeq(db, sessionDbId)
-    const nextSeq = (this.seq ?? 0) + 1
+    // Critical section: seq allocation + R2 write + D1 batch + seq advance.
+    // Wrapped in blockConcurrencyWhile so two concurrent /data calls to the
+    // same session (same DO) can't both compute the same seq and race on the
+    // session_batches UNIQUE constraint. Cloudflare's default input gate
+    // preserves state across I/O yields but does not serialize full
+    // critical sections — blockConcurrencyWhile does.
+    return this.state.blockConcurrencyWhile(async () => {
+      await this.bindSessionId(sessionDbId)
 
-    // 1. R2 write first. On failure, no seq advance, no D1 mutation.
-    let r2Result: { key: string; byteLength: number }
-    try {
-      r2Result = await putBatchJsonl(this.env, sessionDbId, nextSeq, entries)
-    } catch (err) {
-      return new Response(`r2_write_failed: ${String(err)}`, { status: 503 })
-    }
+      const db = createDb(this.env)
+      await this.hydrateSeq(db, sessionDbId)
+      const nextSeq = (this.seq ?? 0) + 1
 
-    // 2. D1 atomic group: insert batch row + bump uploaded_count + touch
-    //    last_batch_at + invalidate wpilog cache. db.batch ensures all-or-
-    //    nothing at the D1 layer.
-    try {
-      await db.batch([
-        db.insert(sessionBatches).values({
-          sessionId: sessionDbId,
-          seq: nextSeq,
-          byteLength: r2Result.byteLength,
-          entryCount: entries.length,
-          r2Key: r2Result.key,
-        }),
-        db
-          .update(telemetrySessions)
-          .set({
-            uploadedCount: sql`${telemetrySessions.uploadedCount} + ${entries.length}`,
-            lastBatchAt: new Date(),
-            wpilogKey: null,
-            wpilogGeneratedAt: null,
-          })
-          .where(eq(telemetrySessions.id, sessionDbId)),
-      ])
-    } catch (err) {
-      // D1 failed after R2 succeeded. Leave seq alone so the retry reuses
-      // the same number and overwrites the orphan R2 object.
-      return new Response(`d1_batch_failed: ${String(err)}`, { status: 503 })
-    }
+      // 1. R2 write first. On failure, no seq advance, no D1 mutation.
+      let r2Result: { key: string; byteLength: number }
+      try {
+        r2Result = await putBatchJsonl(this.env, sessionDbId, nextSeq, entries)
+      } catch (err) {
+        return new Response(`r2_write_failed: ${String(err)}`, { status: 503 })
+      }
 
-    // 3. Only now advance seq in memory + storage.
-    this.seq = nextSeq
-    await this.state.storage.put("seq", nextSeq)
+      // 2. D1 atomic group: insert batch row + bump uploaded_count + touch
+      //    last_batch_at + invalidate wpilog cache. db.batch ensures all-or-
+      //    nothing at the D1 layer.
+      try {
+        await db.batch([
+          db.insert(sessionBatches).values({
+            sessionId: sessionDbId,
+            seq: nextSeq,
+            byteLength: r2Result.byteLength,
+            entryCount: entries.length,
+            r2Key: r2Result.key,
+          }),
+          db
+            .update(telemetrySessions)
+            .set({
+              uploadedCount: sql`${telemetrySessions.uploadedCount} + ${entries.length}`,
+              lastBatchAt: new Date(),
+              wpilogKey: null,
+              wpilogGeneratedAt: null,
+            })
+            .where(eq(telemetrySessions.id, sessionDbId)),
+        ])
+      } catch (err) {
+        // D1 failed after R2 succeeded. Leave seq alone so the retry reuses
+        // the same number and overwrites the orphan R2 object.
+        return new Response(`d1_batch_failed: ${String(err)}`, { status: 503 })
+      }
 
-    return Response.json({ count: entries.length } satisfies { count: number })
+      // 3. Only now advance seq in memory + storage.
+      this.seq = nextSeq
+      await this.state.storage.put("seq", nextSeq)
+
+      return Response.json({ count: entries.length } satisfies { count: number })
+    })
   }
 
   private async handleComplete(request: Request): Promise<Response> {
