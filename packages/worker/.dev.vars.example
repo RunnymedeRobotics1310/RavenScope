@@ -1,0 +1,19 @@
+# Copy this file to `.dev.vars` (gitignored) and fill in RESEND_API_KEY.
+# `wrangler dev` reads `.dev.vars` automatically.
+#
+# For production deployment, use:
+#   wrangler secret put SESSION_SECRET
+#   wrangler secret put RESEND_API_KEY
+# (Generate a new 32-byte base64 random for the production SESSION_SECRET —
+#  do NOT reuse the dev value below.)
+
+# JSON map of key-id → base64 HMAC secret. See plan Unit 3 — cookie kid rotation.
+# The dev value below was generated once and committed as a template; replace
+# in production with: node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+SESSION_SECRET={"v1":"jCLCQrUueRY4ZlbfiaW1BQiQrMhNuU78wykACwHV35M="}
+
+# Resend API key for magic-link delivery. Get from https://resend.com/api-keys.
+RESEND_API_KEY=re_YOUR_KEY_HERE
+
+# Overrides the wrangler.toml [vars] entry for local dev only.
+EMAIL_FROM=no-reply@ravenscope.local

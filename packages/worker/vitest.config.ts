@@ -31,9 +31,14 @@ export default defineWorkersConfig(async () => {
             d1Databases: ["DB"],
             durableObjects: {
               SESSION_INGEST_DO: { className: "SessionIngestDO", useSQLite: true },
+              RATE_LIMIT_DO: { className: "RateLimitDO", useSQLite: true },
             },
             bindings: {
               EMAIL_FROM: "no-reply@test.ravenscope.local",
+              SESSION_SECRET: JSON.stringify({
+                v1: "dGVzdC1zZWNyZXQtMzItYnl0ZXMtbG9uZy1mb3ItaG1hYy1rZXk=",
+              }),
+              RESEND_API_KEY: "re_test_key",
               TEST_MIGRATIONS: migrations,
             },
           },

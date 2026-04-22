@@ -15,9 +15,13 @@ not_found_handling = "single-page-application"
 name = "SESSION_INGEST_DO"
 class_name = "SessionIngestDO"
 
+[[durable_objects.bindings]]
+name = "RATE_LIMIT_DO"
+class_name = "RateLimitDO"
+
 [[migrations]]
 tag = "v1"
-new_classes = ["SessionIngestDO"]
+new_classes = ["SessionIngestDO", "RateLimitDO"]
 
 [[d1_databases]]
 binding = "DB"
