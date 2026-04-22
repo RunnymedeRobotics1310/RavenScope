@@ -1,0 +1,23 @@
+{
+  "name": "ravenscope",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "packageManager": "pnpm@9.15.9",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "pnpm -F @ravenscope/web build && pnpm -F @ravenscope/worker build",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint",
+    "dev:worker": "pnpm -F @ravenscope/worker dev",
+    "dev:web": "pnpm -F @ravenscope/web dev",
+    "format": "prettier --write ."
+  },
+  "devDependencies": {
+    "prettier": "^3.3.3",
+    "typescript": "^5.6.3"
+  }
+}

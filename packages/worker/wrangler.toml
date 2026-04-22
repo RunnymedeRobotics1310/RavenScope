@@ -1,0 +1,28 @@
+name = "ravenscope"
+main = "src/index.ts"
+compatibility_date = "2026-04-17"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = "../web/dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+# Note: `/api/*` routes return Worker 404s rather than falling back to index.html because
+# Hono handles them explicitly. If a future bundle emits files at `/api/*` paths, add
+# `run_worker_first = ["/api/*"]` (format varies by wrangler version — verify schema).
+
+[[durable_objects.bindings]]
+name = "SESSION_INGEST_DO"
+class_name = "SessionIngestDO"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["SessionIngestDO"]
+
+[vars]
+EMAIL_FROM = "no-reply@ravenscope.example.com"
+
+# D1 + R2 bindings arrive in Unit 2 / Unit 5.
+# Secrets (set via `wrangler secret put`):
+#   SESSION_SECRET — JSON map {"v1":"<32-byte-base64>"}
+#   RESEND_API_KEY

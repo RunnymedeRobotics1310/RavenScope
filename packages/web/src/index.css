@@ -1,0 +1,27 @@
+@import "tailwindcss";
+
+/*
+ * RavenScope design tokens — 1:1 mapping from docs/design/ravenscope-ui.pen (Unit 0-C).
+ * Dark-mode values are the v1 default; light-mode values are kept as comments for future theming.
+ */
+@theme {
+  --color-page: #0b0b0d; /* light: #ffffff */
+  --color-surface: #15151a; /* light: #fafafa */
+  --color-code: #1a1a1f; /* light: #f5f5f5 */
+  --color-primary: #f2f2f4; /* light: #0d0d0d */
+  --color-secondary: #8a8a93; /* light: #7a7a7a */
+  --color-muted: #5a5a63; /* light: #b0b0b0 */
+  --color-placeholder: #3e3e46; /* light: #d0d0d0 */
+  --color-border: #24242b; /* light: #e8e8e8 */
+  --color-accent: #e42313;
+  --color-accent-fg: #ffffff;
+  --color-success: #22c55e;
+
+  --default-border-color: var(--color-border);
+
+  --font-display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --radius: 0px;
+}
