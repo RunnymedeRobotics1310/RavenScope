@@ -1,5 +1,6 @@
 import { Hono } from "hono"
 import { httpsOnly } from "./auth/https-only"
+import { apiKeyRoutes } from "./routes/api-keys"
 import { authRoutes } from "./routes/auth"
 import type { Env } from "./env"
 
@@ -12,6 +13,7 @@ app.use("*", httpsOnly)
 
 app.get("/api/health", (c) => c.json({ ok: true }))
 app.route("/api/auth", authRoutes)
+app.route("/api/keys", apiKeyRoutes)
 
 export default {
   fetch: app.fetch,

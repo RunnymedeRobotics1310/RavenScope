@@ -13,6 +13,7 @@ import { sendMagicLink } from "../auth/email"
 import { generateToken, recordTokenRequest, verifyToken } from "../auth/magic-link"
 import { checkRateLimit } from "../auth/rate-limit"
 import { requireCookieUser } from "../auth/require-cookie-user"
+import { requireCookieKind } from "../auth/user"
 import { createDb } from "../db/client"
 import type { RequestLinkRequest, UserMeResponse } from "../dto"
 
@@ -102,6 +103,7 @@ authRoutes.get("/verify", async (c) => {
 
 authRoutes.post("/logout", requireCookieUser, async (c) => {
   const user = c.var.user
+  requireCookieKind(user)
   const db = createDb(c.env)
   const ipHash = await hashIp(c.req.header("CF-Connecting-IP") ?? "unknown")
   await logAudit(db, {
@@ -122,6 +124,7 @@ authRoutes.post("/logout", requireCookieUser, async (c) => {
 
 authRoutes.get("/me", requireCookieUser, (c) => {
   const user = c.var.user
+  requireCookieKind(user)
   const payload: UserMeResponse = {
     userId: user.userId,
     email: user.email,

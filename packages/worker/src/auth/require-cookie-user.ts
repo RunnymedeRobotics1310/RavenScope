@@ -9,19 +9,8 @@ import {
   signSession,
   verifySession,
 } from "./cookie"
-
-export interface CookieUser {
-  userId: string
-  workspaceId: string
-  email: string
-  workspaceName: string
-}
-
-declare module "hono" {
-  interface ContextVariableMap {
-    user: CookieUser
-  }
-}
+// Imports the module augmentation that registers `user` in ContextVariableMap.
+import "./user"
 
 /**
  * Reads the session cookie, verifies the signature + expiry, and loads the
@@ -67,6 +56,7 @@ export const requireCookieUser: MiddlewareHandler<{ Bindings: Env }> = async (c,
   }
 
   c.set("user", {
+    kind: "cookie",
     userId: user.id,
     workspaceId: workspace.id,
     email: user.email,
