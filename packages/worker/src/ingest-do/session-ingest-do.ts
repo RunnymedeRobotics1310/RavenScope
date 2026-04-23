@@ -86,7 +86,7 @@ export class SessionIngestDO implements DurableObject {
       const nextSeq = (this.seq ?? 0) + 1
 
       // 1. R2 write first. On failure, no seq advance, no D1 mutation.
-      let r2Result: { key: string; byteLength: number }
+      let r2Result: { key: string; rawByteLength: number; storedByteLength: number }
       try {
         r2Result = await putBatchJsonl(this.env, sessionDbId, nextSeq, entries)
       } catch (err) {
@@ -101,7 +101,10 @@ export class SessionIngestDO implements DurableObject {
           db.insert(sessionBatches).values({
             sessionId: sessionDbId,
             seq: nextSeq,
-            byteLength: r2Result.byteLength,
+            // byte_length stays as the raw JSONL length (users reading this
+            // column see "N bytes of real telemetry"). storedByteLength is
+            // used separately by the quota system (plan 2026-04-23-001).
+            byteLength: r2Result.rawByteLength,
             entryCount: entries.length,
             r2Key: r2Result.key,
           }),

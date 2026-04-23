@@ -1,6 +1,7 @@
 import type { KeyTreeNode, KeyTreeResponse, TelemetryEntryRequest } from "../dto"
 import type { Env } from "../env"
 import { batchPrefix, treeKey } from "../storage/keys"
+import { putTextBlob, readPlainBlobStream, readTextBlob } from "../storage/r2"
 
 interface Aggregate {
   ntType: string
@@ -30,7 +31,9 @@ export async function buildTree(env: Env, sessionDbId: string): Promise<KeyTreeR
   for (const key of keys) {
     const obj = await env.BLOBS.get(key)
     if (!obj) continue
-    const text = await obj.text()
+    // readPlainBlobStream decompresses gzipped objects transparently and
+    // passes legacy uncompressed objects through unchanged.
+    const text = await new Response(readPlainBlobStream(obj)).text()
     for (const line of text.split("\n")) {
       if (!line.trim()) continue
       let entry: TelemetryEntryRequest
@@ -85,17 +88,17 @@ export async function cacheTree(
   sessionDbId: string,
   tree: KeyTreeResponse,
 ): Promise<void> {
-  await env.BLOBS.put(treeKey(sessionDbId), JSON.stringify(tree))
+  await putTextBlob(env, treeKey(sessionDbId), JSON.stringify(tree), "application/json")
 }
 
 export async function loadCachedTree(
   env: Env,
   sessionDbId: string,
 ): Promise<KeyTreeResponse | null> {
-  const obj = await env.BLOBS.get(treeKey(sessionDbId))
-  if (!obj) return null
+  const text = await readTextBlob(env, treeKey(sessionDbId))
+  if (text === null) return null
   try {
-    return JSON.parse(await obj.text()) as KeyTreeResponse
+    return JSON.parse(text) as KeyTreeResponse
   } catch {
     return null
   }

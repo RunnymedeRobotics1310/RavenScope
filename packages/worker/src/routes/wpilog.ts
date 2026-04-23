@@ -5,7 +5,11 @@ import { requireCookieKind } from "../auth/user"
 import { createDb } from "../db/client"
 import { telemetrySessions } from "../db/schema"
 import type { Env } from "../env"
-import { R2MultipartWpilogWriter, streamSessionBatches } from "../storage/r2"
+import {
+  R2MultipartWpilogWriter,
+  readPlainBlobStream,
+  streamSessionBatches,
+} from "../storage/r2"
 import { wpilogKey as wpilogKeyFor } from "../storage/keys"
 import { adaptedR2Source } from "../wpilog/adapter"
 import { convertStreaming } from "../wpilog/convert"
@@ -45,7 +49,7 @@ wpilogRoutes.get("/:id/wpilog", async (c) => {
   if (cacheFresh) {
     const cached = await c.env.BLOBS.get(session.wpilogKey!)
     if (cached) {
-      return streamWpilogResponse(cached.body, session.sessionId)
+      return streamWpilogResponse(readPlainBlobStream(cached), session.sessionId)
     }
     // Stale key pointing at missing object — fall through to regenerate.
   }
@@ -73,10 +77,20 @@ wpilogRoutes.get("/:id/wpilog", async (c) => {
 
   const obj = await c.env.BLOBS.get(key)
   if (!obj) return c.text("wpilog_missing_after_write", 503)
-  return streamWpilogResponse(obj.body, session.sessionId)
+  return streamWpilogResponse(readPlainBlobStream(obj), session.sessionId)
 })
 
-function streamWpilogResponse(body: ReadableStream, sessionId: string): Response {
+/**
+ * Stream a plain (uncompressed) WPILog body to the client. The caller is
+ * responsible for producing the plain stream — readPlainBlobStream pipes
+ * through DecompressionStream when the stored object is gzipped. No
+ * Content-Encoding header on the response: clients (browsers, curl,
+ * wget, AdvantageScope) always see standard uncompressed WPILog bytes.
+ */
+function streamWpilogResponse(
+  body: ReadableStream<Uint8Array>,
+  sessionId: string,
+): Response {
   return new Response(body, {
     status: 200,
     headers: {
