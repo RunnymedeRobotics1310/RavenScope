@@ -19,13 +19,15 @@ interface KeyTreeProps {
 export function KeyTree({ nodes, search = "", sessionStartIso }: KeyTreeProps) {
   const baseMs = sessionStartIso ? Date.parse(sessionStartIso) : 0
 
+  const sortedNodes = useMemo(() => sortDotsLast(nodes), [nodes])
+
   // Compute which paths must be force-open to reveal filter matches.
   const forceOpen = useMemo(
-    () => (search ? collectMatchingAncestors(nodes, search.toLowerCase()) : null),
-    [nodes, search],
+    () => (search ? collectMatchingAncestors(sortedNodes, search.toLowerCase()) : null),
+    [sortedNodes, search],
   )
 
-  if (nodes.length === 0) {
+  if (sortedNodes.length === 0) {
     return (
       <div className="py-12 px-6 text-center text-muted text-[14px]">
         No keys captured. The session was created but no NT data was posted.
@@ -35,7 +37,7 @@ export function KeyTree({ nodes, search = "", sessionStartIso }: KeyTreeProps) {
 
   return (
     <ul role="tree" className="py-2">
-      {nodes.map((n) => (
+      {sortedNodes.map((n) => (
         <Node
           key={n.path}
           node={n}
@@ -49,6 +51,22 @@ export function KeyTree({ nodes, search = "", sessionStartIso }: KeyTreeProps) {
   )
 }
 
+/**
+ * Sorts siblings with dot-prefixed names (e.g. `.schema`) to the end of each
+ * level. Same ordering rule is applied recursively so deep `.schema` subtrees
+ * stay out of the way at whatever depth they appear.
+ */
+function sortDotsLast(nodes: KeyTreeNode[]): KeyTreeNode[] {
+  return [...nodes]
+    .sort((a, b) => {
+      const aDot = a.name.startsWith(".")
+      const bDot = b.name.startsWith(".")
+      if (aDot !== bDot) return aDot ? 1 : -1
+      return a.name.localeCompare(b.name)
+    })
+    .map((n) => (n.children.length > 0 ? { ...n, children: sortDotsLast(n.children) } : n))
+}
+
 interface NodeProps {
   node: KeyTreeNode
   depth: number
@@ -58,7 +76,10 @@ interface NodeProps {
 }
 
 function Node({ node, depth, search, forceOpen, baseMs }: NodeProps) {
-  const [open, setOpen] = useState(depth === 0)
+  // Dot-prefixed nodes (`.schema`, etc.) are always collapsed by default,
+  // regardless of depth. Regular nodes follow the normal "root open, rest
+  // closed" rule.
+  const [open, setOpen] = useState(depth === 0 && !node.name.startsWith("."))
   const isLeaf = node.sampleCount !== undefined
   const hasChildren = node.children.length > 0
   const effectiveOpen = forceOpen ? forceOpen.has(node.path) : open
