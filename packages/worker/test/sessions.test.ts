@@ -286,6 +286,80 @@ describe("GET /api/sessions/:id — detail", () => {
   })
 })
 
+/* --- PATCH /api/sessions/:id --------------------------------------- */
+
+describe("PATCH /api/sessions/:id — update", () => {
+  it("updates fmsEventName and returns the refreshed detail", async () => {
+    const a = await signInAs("patch@test.local")
+    const id = await seedSession(a.workspaceId, { sessionId: "editable" })
+
+    const res = await SELF.fetch(`${BASE}/api/sessions/${id}`, {
+      method: "PATCH",
+      headers: { Cookie: a.cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ fmsEventName: "Ontario District — Newmarket" }),
+    })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { fmsEventName: string | null }
+    expect(body.fmsEventName).toBe("Ontario District — Newmarket")
+
+    const db = createDb(env)
+    const [row] = await db
+      .select()
+      .from(telemetrySessions)
+      .where(eq(telemetrySessions.id, id))
+    expect(row!.fmsEventName).toBe("Ontario District — Newmarket")
+  })
+
+  it("clears fmsEventName when given null and trims whitespace-only to null", async () => {
+    const a = await signInAs("clear@test.local")
+    const id = await seedSession(a.workspaceId, {
+      sessionId: "clearable",
+      fmsEventName: "Existing",
+    })
+
+    // null explicitly clears.
+    const res1 = await SELF.fetch(`${BASE}/api/sessions/${id}`, {
+      method: "PATCH",
+      headers: { Cookie: a.cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ fmsEventName: null }),
+    })
+    const b1 = (await res1.json()) as { fmsEventName: string | null }
+    expect(b1.fmsEventName).toBeNull()
+
+    // Whitespace-only also clears.
+    const res2 = await SELF.fetch(`${BASE}/api/sessions/${id}`, {
+      method: "PATCH",
+      headers: { Cookie: a.cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ fmsEventName: "   " }),
+    })
+    const b2 = (await res2.json()) as { fmsEventName: string | null }
+    expect(b2.fmsEventName).toBeNull()
+  })
+
+  it("rejects over-long fmsEventName with 400", async () => {
+    const a = await signInAs("long@test.local")
+    const id = await seedSession(a.workspaceId, { sessionId: "long" })
+    const res = await SELF.fetch(`${BASE}/api/sessions/${id}`, {
+      method: "PATCH",
+      headers: { Cookie: a.cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ fmsEventName: "x".repeat(201) }),
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it("404 across workspaces", async () => {
+    const a = await signInAs("pa@test.local")
+    const b = await signInAs("pb@test.local")
+    const id = await seedSession(b.workspaceId, { sessionId: "b-only" })
+    const res = await SELF.fetch(`${BASE}/api/sessions/${id}`, {
+      method: "PATCH",
+      headers: { Cookie: a.cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ fmsEventName: "pwned" }),
+    })
+    expect(res.status).toBe(404)
+  })
+})
+
 /* --- DELETE /api/sessions/:id -------------------------------------- */
 
 describe("DELETE /api/sessions/:id — delete", () => {

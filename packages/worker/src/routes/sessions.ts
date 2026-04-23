@@ -114,6 +114,60 @@ sessionsRoutes.get("/:id", async (c) => {
   return c.json(detail)
 })
 
+sessionsRoutes.patch("/:id", async (c) => {
+  const user = c.var.user
+  requireCookieKind(user)
+  const id = c.req.param("id")
+
+  const body = await c.req.json<{ fmsEventName?: string | null }>().catch(() => null)
+  if (!body) return c.json({ error: "invalid_body" }, 400)
+
+  // Explicit allowlist — only fields the UI is allowed to edit.
+  const patch: Partial<typeof telemetrySessions.$inferInsert> = {}
+  if ("fmsEventName" in body) {
+    const v = body.fmsEventName
+    if (v !== null && (typeof v !== "string" || v.length > 200)) {
+      return c.json({ error: "invalid_fms_event_name" }, 400)
+    }
+    patch.fmsEventName = typeof v === "string" ? v.trim() || null : null
+  }
+  if (Object.keys(patch).length === 0) {
+    return c.json({ error: "no_fields_to_update" }, 400)
+  }
+
+  const db = createDb(c.env)
+  const [row] = await db
+    .select()
+    .from(telemetrySessions)
+    .where(
+      and(eq(telemetrySessions.id, id), eq(telemetrySessions.workspaceId, user.workspaceId)),
+    )
+    .limit(1)
+  if (!row) return c.json({ error: "not_found" }, 404)
+
+  await db.update(telemetrySessions).set(patch).where(eq(telemetrySessions.id, row.id))
+
+  const [updated] = await db
+    .select()
+    .from(telemetrySessions)
+    .where(eq(telemetrySessions.id, row.id))
+    .limit(1)
+
+  const batchCount = await countBatches(db, row.id)
+  const detail: SessionDetail = {
+    ...toListItem(updated!),
+    robotIp: updated!.robotIp ?? "",
+    createdAt: updated!.createdAt.toISOString(),
+    tournamentId: updated!.tournamentId,
+    matchLevel: updated!.matchLevel,
+    matchNumber: updated!.matchNumber,
+    playoffRound: updated!.playoffRound,
+    batchCount,
+    wpilogKey: updated!.wpilogKey,
+  }
+  return c.json(detail)
+})
+
 sessionsRoutes.delete("/:id", async (c) => {
   const user = c.var.user
   requireCookieKind(user)

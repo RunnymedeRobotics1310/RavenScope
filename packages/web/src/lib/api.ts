@@ -115,6 +115,18 @@ export async function deleteSession(id: string): Promise<void> {
   if (status !== 204) throw new Error(`delete ${id} returned ${status}`)
 }
 
+export async function updateSession(
+  id: string,
+  patch: { fmsEventName?: string | null },
+): Promise<SessionDetail> {
+  const { data, status } = await request<SessionDetail>(`/api/sessions/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  })
+  if (status !== 200 || !data) throw new Error(`update ${id} returned ${status}`)
+  return data
+}
+
 export async function fetchApiKeys(): Promise<ApiKeyListResponse> {
   const { data, status } = await request<ApiKeyListResponse>("/api/keys")
   if (status !== 200 || !data) throw new Error(`/api/keys returned ${status}`)

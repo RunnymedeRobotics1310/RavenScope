@@ -6,11 +6,14 @@ import { Link, useNavigate, useParams } from "react-router-dom"
 import { Button } from "../components/Button"
 import { KeyTree } from "../components/KeyTree"
 import { TopNav } from "../components/TopNav"
+import { EditableText } from "../components/EditableText"
 import {
   deleteSession,
   fetchSessionDetail,
   fetchSessionTree,
   sessionDownloadUrl,
+  updateSession,
+  type SessionDetail as SessionDetailDto,
 } from "../lib/api"
 
 export function SessionDetail() {
@@ -37,6 +40,14 @@ export function SessionDetail() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["sessions"] })
       nav("/", { replace: true })
+    },
+  })
+
+  const updateEventName = useMutation({
+    mutationFn: (next: string | null) => updateSession(id, { fmsEventName: next }),
+    onSuccess: (updated) => {
+      qc.setQueryData<SessionDetailDto>(["session", id], updated)
+      qc.invalidateQueries({ queryKey: ["sessions"] })
     },
   })
 
@@ -80,15 +91,28 @@ export function SessionDetail() {
                   </a>
                 </div>
               </div>
-              <h1 className="font-display text-[40px] font-medium leading-tight tracking-[-1px] text-primary">
-                {detail.data.matchLabel ? (
-                  detail.data.matchLabel
-                ) : (
-                  <span className="font-mono">{detail.data.sessionId}</span>
+              <h1 className="font-display text-[40px] font-medium leading-tight tracking-[-1px] text-primary flex items-baseline gap-4">
+                <EditableText
+                  value={detail.data.fmsEventName}
+                  placeholder="Add event name"
+                  onCommit={async (next) => {
+                    await updateEventName.mutateAsync(next)
+                  }}
+                  className="text-[40px] font-display font-medium tracking-[-1px]"
+                  ariaLabel="Edit event name"
+                />
+                {detail.data.matchLabel && (
+                  <span className="text-secondary text-[22px] font-display font-normal">
+                    · {detail.data.matchLabel}
+                  </span>
                 )}
               </h1>
               <div className="flex flex-wrap gap-12">
-                <Stat label="Event" value={detail.data.fmsEventName ?? "—"} mono={false} />
+                <Stat
+                  label="Session"
+                  value={<span className="font-mono">{detail.data.sessionId}</span>}
+                  mono={false}
+                />
                 <Stat
                   label="Started"
                   value={new Date(detail.data.startedAt).toLocaleString(undefined, {
