@@ -11,12 +11,34 @@ pnpm install
 pnpm -r typecheck
 pnpm -r test
 pnpm -r build
+```
 
-# Run the Worker locally (requires wrangler dev):
+### Two dev modes — pick one per browser tab
+
+**Worker-only (recommended for end-to-end flows)**
+
+`pnpm dev:worker` builds the SPA, applies local D1 migrations, and starts
+wrangler dev. Everything lives at `http://127.0.0.1:8787` — the API, the
+built SPA, and the magic-link email URLs. Sign-in, cookies, and the
+bearer-ingest path all share one origin.
+
+```bash
 pnpm dev:worker
+# → http://127.0.0.1:8787
+```
 
-# Run the SPA against the local Worker:
-pnpm dev:web
+**Vite HMR (SPA iteration)**
+
+`pnpm dev:web` runs Vite with hot-module reload at `http://localhost:5173`.
+API calls proxy through to the worker. Useful when you're iterating on
+the UI and don't want a full rebuild per change. Caveat: magic-link
+emails still point at `127.0.0.1:8787`, so complete the sign-in loop on
+that origin first (cookies don't transfer between `127.0.0.1` and
+`localhost`, which the browser treats as distinct hosts).
+
+```bash
+pnpm dev:worker   # terminal 1
+pnpm dev:web      # terminal 2 — then visit http://localhost:5173
 ```
 
 ## Repository layout
