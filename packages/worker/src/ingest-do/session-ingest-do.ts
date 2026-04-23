@@ -2,6 +2,7 @@ import { eq, sql } from "drizzle-orm"
 import { createDb, type Db } from "../db/client"
 import { sessionBatches, telemetrySessions } from "../db/schema"
 import type { Env } from "../env"
+import { QuotaExceededError } from "../quota/daily-quota"
 import { putBatchJsonl } from "../storage/r2"
 
 /**
@@ -90,6 +91,14 @@ export class SessionIngestDO implements DurableObject {
       try {
         r2Result = await putBatchJsonl(this.env, sessionDbId, nextSeq, entries)
       } catch (err) {
+        if (err instanceof QuotaExceededError) {
+          // Surface the 429 through the DO→Worker fetch boundary with
+          // a status code the Worker route can pass through as-is.
+          return new Response(`quota_cap_hit: ${err.metric}`, {
+            status: 429,
+            headers: { "Retry-After": String(err.retryAfter) },
+          })
+        }
         return new Response(`r2_write_failed: ${String(err)}`, { status: 503 })
       }
 

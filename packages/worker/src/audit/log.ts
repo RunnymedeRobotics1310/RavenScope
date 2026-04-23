@@ -10,6 +10,7 @@ export type AuditEventType =
   | "key_use"
   | "session_create"
   | "session_complete"
+  | "quota_cap_hit"
 
 export interface AuditEntry {
   eventType: AuditEventType

@@ -118,6 +118,15 @@ telemetryRoutes.post("/session/:sessionId/data", async (c) => {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ sessionDbId: row.id, entries }),
   })
+  if (res.status === 429) {
+    return new Response(await res.text(), {
+      status: 429,
+      headers: {
+        "Retry-After": res.headers.get("Retry-After") ?? "60",
+        "Content-Type": "text/plain; charset=utf-8",
+      },
+    })
+  }
   if (res.status >= 500) {
     return c.text(await res.text(), 503)
   }

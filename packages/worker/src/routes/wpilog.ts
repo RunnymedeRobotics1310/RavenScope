@@ -5,6 +5,8 @@ import { requireCookieKind } from "../auth/user"
 import { createDb } from "../db/client"
 import { telemetrySessions } from "../db/schema"
 import type { Env } from "../env"
+import { chargeOrThrow, QuotaExceededError } from "../quota/daily-quota"
+import { cappedResponse } from "../quota/http"
 import {
   R2MultipartWpilogWriter,
   readPlainBlobStream,
@@ -47,6 +49,13 @@ wpilogRoutes.get("/:id/wpilog", async (c) => {
     session.wpilogGeneratedAt.getTime() >= cacheMark
 
   if (cacheFresh) {
+    try {
+      // Charge the cache-hit read as one Class B op.
+      await chargeOrThrow(c.env, { classB: 1 })
+    } catch (err) {
+      if (err instanceof QuotaExceededError) return cappedResponse(err)
+      throw err
+    }
     const cached = await c.env.BLOBS.get(session.wpilogKey!)
     if (cached) {
       return streamWpilogResponse(readPlainBlobStream(cached), session.sessionId)
@@ -58,7 +67,7 @@ wpilogRoutes.get("/:id/wpilog", async (c) => {
   const key = wpilogKeyFor(session.id)
   const writer = new R2MultipartWpilogWriter(c.env.BLOBS, key)
   try {
-    await writer.init()
+    await writer.init(c.env)
     const factory = adaptedR2Source(
       () => streamSessionBatches(c.env, session.id),
       session.startedAt,
@@ -67,6 +76,9 @@ wpilogRoutes.get("/:id/wpilog", async (c) => {
     await writer.finalize()
   } catch (err) {
     await writer.abort().catch(() => {})
+    if (err instanceof QuotaExceededError) {
+      return cappedResponse(err)
+    }
     return c.text(`wpilog_generation_failed: ${String(err)}`, 503)
   }
 

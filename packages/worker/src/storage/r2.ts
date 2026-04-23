@@ -1,3 +1,4 @@
+import { chargeOrThrow } from "../quota/daily-quota"
 import type { WpilogWriter } from "../wpilog/encoder"
 import type { Env } from "../env"
 import { batchKey, batchPrefix } from "./keys"
@@ -92,6 +93,9 @@ export async function putBatchJsonl(
   const body = entries.map((e) => JSON.stringify(e)).join("\n") + "\n"
   const rawBytes = new TextEncoder().encode(body)
   const compressed = await gzipEncode(rawBytes)
+  // Charge compressed bytes + 1 Class A op BEFORE the PUT. Throws
+  // QuotaExceededError on cap hit — caller returns 429.
+  await chargeOrThrow(env, { bytes: compressed.length, classA: 1 })
   const key = batchKey(sessionDbId, seq)
   await env.BLOBS.put(key, compressed, {
     httpMetadata: {
@@ -119,12 +123,16 @@ export async function* streamSessionBatches(
   env: Env,
   sessionDbId: string,
 ): AsyncGenerator<Uint8Array> {
+  // List: 1 Class A op.
+  await chargeOrThrow(env, { classA: 1 })
   const listed = await env.BLOBS.list({ prefix: batchPrefix(sessionDbId) + "batch-" })
   const keys = listed.objects
     .map((o) => o.key)
     .filter((k) => k.endsWith(".jsonl"))
     .sort()
   for (const key of keys) {
+    // Each GET: 1 Class B op.
+    await chargeOrThrow(env, { classB: 1 })
     const obj = await env.BLOBS.get(key)
     if (!obj) continue
     const stream = readPlainBlobStream(obj)
@@ -145,6 +153,8 @@ export async function* streamSessionBatches(
 
 /** Reads the object as UTF-8 text, decompressing if gzipped. Null if missing. */
 export async function readTextBlob(env: Env, key: string): Promise<string | null> {
+  // GET: 1 Class B op.
+  await chargeOrThrow(env, { classB: 1 })
   const obj = await env.BLOBS.get(key)
   if (!obj) return null
   if (!isGzipped(obj)) return obj.text()
@@ -162,6 +172,7 @@ export async function putTextBlob(
   contentType: string,
 ): Promise<{ storedByteLength: number }> {
   const compressed = await gzipEncode(new TextEncoder().encode(text))
+  await chargeOrThrow(env, { bytes: compressed.length, classA: 1 })
   await env.BLOBS.put(key, compressed, {
     httpMetadata: {
       contentType,
@@ -197,13 +208,18 @@ export class R2MultipartWpilogWriter implements WpilogWriter {
 
   private pending: Uint8Array[] = []
   private pendingSize = 0
+  private env: Env | null = null
 
   constructor(
     private readonly bucket: R2Bucket,
     private readonly key: string,
   ) {}
 
-  async init(): Promise<void> {
+  async init(env: Env): Promise<void> {
+    // init: 1 Class A op. Charge before creating the multipart upload
+    // so an over-cap state doesn't leave an unfinished upload in R2.
+    await chargeOrThrow(env, { classA: 1 })
+    this.env = env
     this.upload = await this.bucket.createMultipartUpload(this.key, {
       httpMetadata: {
         contentType: "application/octet-stream",
@@ -224,7 +240,7 @@ export class R2MultipartWpilogWriter implements WpilogWriter {
   }
 
   async finalize(): Promise<R2Object> {
-    if (!this.upload || !this.compressWriter || !this.consumer) {
+    if (!this.upload || !this.compressWriter || !this.consumer || !this.env) {
       throw new Error("R2MultipartWpilogWriter: init() not called")
     }
     // Close the compressor; the consumer loop will drain the final
@@ -236,9 +252,12 @@ export class R2MultipartWpilogWriter implements WpilogWriter {
     await this.flushPart()
     if (this.parts.length === 0) {
       // Empty input — upload a one-byte empty part so complete() succeeds.
+      await chargeOrThrow(this.env, { classA: 1 })
       const emptyPart = await this.upload.uploadPart(1, new Uint8Array(0))
       this.parts.push(emptyPart)
     }
+    // complete: 1 Class A op.
+    await chargeOrThrow(this.env, { classA: 1 })
     return this.upload.complete(this.parts)
   }
 
@@ -274,13 +293,17 @@ export class R2MultipartWpilogWriter implements WpilogWriter {
 
   private async flushPart(): Promise<void> {
     if (this.pendingSize === 0) return
-    if (!this.upload) throw new Error("R2MultipartWpilogWriter: init() not called")
+    if (!this.upload || !this.env) {
+      throw new Error("R2MultipartWpilogWriter: init() not called")
+    }
     const merged = new Uint8Array(this.pendingSize)
     let off = 0
     for (const chunk of this.pending) {
       merged.set(chunk, off)
       off += chunk.length
     }
+    // Each uploadPart: 1 Class A + compressed bytes toward the bytes cap.
+    await chargeOrThrow(this.env, { bytes: merged.length, classA: 1 })
     const partNumber = this.parts.length + 1
     const part = await this.upload.uploadPart(partNumber, merged)
     this.parts.push(part)

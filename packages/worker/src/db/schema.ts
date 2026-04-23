@@ -147,6 +147,24 @@ export const sessionBatches = sqliteTable(
   }),
 )
 
+export const dailyQuota = sqliteTable("daily_quota", {
+  /** UTC "YYYY-MM-DD" — effective primary key and the partition boundary. */
+  date: text("date").primaryKey(),
+  /** Total gzip-compressed bytes written to R2 on this day. */
+  bytesUploaded: integer("bytes_uploaded").notNull().default(0),
+  classAOps: integer("class_a_ops").notNull().default(0),
+  classBOps: integer("class_b_ops").notNull().default(0),
+  /** One-shot flags for the operator alert — flip 0→1 on the first
+   *  breach of the day; keeps us from emailing on every subsequent
+   *  over-cap request. */
+  alertedBytes: integer("alerted_bytes").notNull().default(0),
+  alertedClassA: integer("alerted_class_a").notNull().default(0),
+  alertedClassB: integer("alerted_class_b").notNull().default(0),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+})
+
 export const auditLog = sqliteTable(
   "audit_log",
   {
@@ -179,6 +197,7 @@ export const schema = {
   telemetrySessions,
   sessionBatches,
   auditLog,
+  dailyQuota,
 }
 
 // Reference `sql` at top-level to keep the import stable even when we
