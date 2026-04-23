@@ -1,13 +1,33 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom"
+import { AuthGate } from "./components/AuthGate"
+import { ApiKeysPage } from "./routes/api-keys"
+import { CheckEmail } from "./routes/check-email"
+import { SessionDetail } from "./routes/session-detail"
+import { Sessions } from "./routes/sessions"
+import { SignIn } from "./routes/sign-in"
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: { refetchOnWindowFocus: false, retry: false },
+  },
+})
+
 export function App() {
   return (
-    <div className="min-h-screen bg-page text-primary p-12 font-sans">
-      <div className="flex items-center gap-3 mb-8">
-        <div className="w-4 h-4 bg-accent" />
-        <h1 className="text-3xl font-display font-semibold tracking-tight">RavenScope</h1>
-      </div>
-      <p className="text-secondary max-w-xl">
-        Scaffold is alive. Routes, auth, sessions, and the NT key tree arrive in Unit 9.
-      </p>
-    </div>
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/sign-in" element={<SignIn />} />
+          <Route path="/check-email" element={<CheckEmail />} />
+          <Route element={<AuthGate />}>
+            <Route path="/" element={<Sessions />} />
+            <Route path="/sessions/:id" element={<SessionDetail />} />
+            <Route path="/keys" element={<ApiKeysPage />} />
+          </Route>
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </BrowserRouter>
+    </QueryClientProvider>
   )
 }
