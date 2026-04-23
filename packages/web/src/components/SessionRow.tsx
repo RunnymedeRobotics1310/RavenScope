@@ -1,47 +1,75 @@
-import { ChevronRight } from "lucide-react"
+import { Download, Trash2 } from "lucide-react"
 import { Link } from "react-router-dom"
 import type { SessionListItem } from "../lib/api"
+import { sessionDownloadUrl } from "../lib/api"
+import { Tooltip } from "./Tooltip"
 
 interface SessionRowProps {
   session: SessionListItem
+  onRequestDelete: (session: SessionListItem) => void
 }
 
-export function SessionRow({ session }: SessionRowProps) {
+export function SessionRow({ session, onRequestDelete }: SessionRowProps) {
   const started = new Date(session.startedAt)
   const ended = session.endedAt ? new Date(session.endedAt) : null
   const durationMs = ended ? ended.getTime() - started.getTime() : 0
   return (
-    <Link
-      to={`/sessions/${session.id}`}
-      className="flex items-center gap-6 px-5 py-[18px] border-b border-border hover:bg-surface/50 transition-colors text-[14px]"
-    >
-      <div className="flex-1 min-w-0">
-        <div className="font-medium text-primary truncate">
-          {session.fmsEventName ? (
-            session.fmsEventName
-          ) : (
-            <span className="font-mono">{session.sessionId}</span>
-          )}
+    <div className="flex items-center gap-6 pl-5 pr-3 py-[18px] border-b border-border hover:bg-surface/50 transition-colors text-[14px]">
+      {/* Clickable region → session detail. Sibling to the actions cell so
+          the buttons aren't nested inside an anchor (invalid HTML + event
+          bubbling footguns). */}
+      <Link
+        to={`/sessions/${session.id}`}
+        className="flex flex-1 items-center gap-6 min-w-0 focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+      >
+        <div className="flex-1 min-w-0">
+          <div className="font-medium text-primary truncate">
+            {session.fmsEventName ? (
+              session.fmsEventName
+            ) : (
+              <span className="font-mono">{session.sessionId}</span>
+            )}
+          </div>
+          <div className="text-[12px] text-muted mt-0.5">
+            Team {session.teamNumber} · {fmtShortDate(started)}
+          </div>
         </div>
-        <div className="text-[12px] text-muted mt-0.5">
-          Team {session.teamNumber} · {fmtShortDate(started)}
+        <div className="w-40 font-mono text-[13px] text-primary shrink-0">
+          {session.matchLabel ?? "—"}
         </div>
+        <div className="w-56 shrink-0">
+          <div className="text-[13px] text-primary">{fmtDateTime(started)}</div>
+          <div className="text-[12px] text-muted">{fmtAgo(started)}</div>
+        </div>
+        <div className="w-32 font-mono text-[13px] text-primary shrink-0">
+          {durationMs > 0 ? fmtDuration(durationMs) : "—"}
+        </div>
+        <div className="w-32 flex justify-end font-mono text-[13px] text-primary shrink-0">
+          {session.entryCount.toLocaleString()}
+        </div>
+      </Link>
+      <div className="w-24 flex justify-end items-center gap-1 shrink-0">
+        <Tooltip label="Download .wpilog">
+          <a
+            href={sessionDownloadUrl(session.id)}
+            download
+            className="p-2 text-secondary hover:text-primary hover:bg-surface transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            aria-label="Download .wpilog"
+          >
+            <Download size={16} />
+          </a>
+        </Tooltip>
+        <Tooltip label="Delete session">
+          <button
+            onClick={() => onRequestDelete(session)}
+            className="p-2 text-secondary hover:text-accent hover:bg-surface transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            aria-label="Delete session"
+          >
+            <Trash2 size={16} />
+          </button>
+        </Tooltip>
       </div>
-      <div className="w-40 font-mono text-[13px] text-primary shrink-0">
-        {session.matchLabel ?? "—"}
-      </div>
-      <div className="w-56 shrink-0">
-        <div className="text-[13px] text-primary">{fmtDateTime(started)}</div>
-        <div className="text-[12px] text-muted">{fmtAgo(started)}</div>
-      </div>
-      <div className="w-32 font-mono text-[13px] text-primary shrink-0">
-        {durationMs > 0 ? fmtDuration(durationMs) : "—"}
-      </div>
-      <div className="w-32 flex justify-end font-mono text-[13px] text-primary shrink-0">
-        {session.entryCount.toLocaleString()}
-      </div>
-      <ChevronRight size={14} className="text-muted w-8" />
-    </Link>
+    </div>
   )
 }
 

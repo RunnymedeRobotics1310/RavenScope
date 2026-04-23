@@ -1,3 +1,4 @@
+import * as Tooltip from "@radix-ui/react-tooltip"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom"
 import { AuthGate } from "./components/AuthGate"
@@ -16,18 +17,20 @@ const queryClient = new QueryClient({
 export function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <Routes>
-          <Route path="/sign-in" element={<SignIn />} />
-          <Route path="/check-email" element={<CheckEmail />} />
-          <Route element={<AuthGate />}>
-            <Route path="/" element={<Sessions />} />
-            <Route path="/sessions/:id" element={<SessionDetail />} />
-            <Route path="/keys" element={<ApiKeysPage />} />
-          </Route>
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </BrowserRouter>
+      <Tooltip.Provider delayDuration={300} skipDelayDuration={100}>
+        <BrowserRouter>
+          <Routes>
+            <Route path="/sign-in" element={<SignIn />} />
+            <Route path="/check-email" element={<CheckEmail />} />
+            <Route element={<AuthGate />}>
+              <Route path="/" element={<Sessions />} />
+              <Route path="/sessions/:id" element={<SessionDetail />} />
+              <Route path="/keys" element={<ApiKeysPage />} />
+            </Route>
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </BrowserRouter>
+      </Tooltip.Provider>
     </QueryClientProvider>
   )
 }

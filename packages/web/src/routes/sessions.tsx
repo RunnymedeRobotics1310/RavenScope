@@ -1,12 +1,18 @@
-import { useQuery } from "@tanstack/react-query"
-import { ArrowDown, ArrowUp, Search } from "lucide-react"
+import * as Dialog from "@radix-ui/react-dialog"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { ArrowDown, ArrowUp, Search, X } from "lucide-react"
 import { useMemo, useState } from "react"
 import { Link } from "react-router-dom"
 import { Button } from "../components/Button"
 import { EmptyState } from "../components/EmptyState"
 import { SessionRow } from "../components/SessionRow"
 import { TopNav } from "../components/TopNav"
-import { fetchSessions, type SessionListResponse } from "../lib/api"
+import {
+  deleteSession,
+  fetchSessions,
+  type SessionListItem,
+  type SessionListResponse,
+} from "../lib/api"
 
 type Sort = "started_at" | "fms_event_name" | "match_label"
 type Order = "asc" | "desc"
@@ -15,12 +21,22 @@ export function Sessions() {
   const [q, setQ] = useState("")
   const [sort, setSort] = useState<Sort>("started_at")
   const [order, setOrder] = useState<Order>("desc")
+  const [pendingDelete, setPendingDelete] = useState<SessionListItem | null>(null)
+  const qc = useQueryClient()
 
   const params = useMemo(() => ({ q, sort, order, limit: 25 }), [q, sort, order])
 
   const list = useQuery<SessionListResponse>({
     queryKey: ["sessions", params],
     queryFn: () => fetchSessions(params),
+  })
+
+  const del = useMutation({
+    mutationFn: (session: SessionListItem) => deleteSession(session.id),
+    onSuccess: () => {
+      setPendingDelete(null)
+      qc.invalidateQueries({ queryKey: ["sessions"] })
+    },
   })
 
   return (
@@ -84,7 +100,7 @@ export function Sessions() {
             />
             <span className="w-32">Duration</span>
             <span className="w-32 text-right">Entries</span>
-            <span className="w-8" />
+            <span className="w-24 text-right">Actions</span>
           </header>
 
           {list.isLoading && (
@@ -106,7 +122,9 @@ export function Sessions() {
               }
             />
           )}
-          {list.data?.items.map((s) => <SessionRow key={s.id} session={s} />)}
+          {list.data?.items.map((s) => (
+            <SessionRow key={s.id} session={s} onRequestDelete={setPendingDelete} />
+          ))}
         </div>
 
         {list.data && list.data.nextCursor && (
@@ -115,6 +133,61 @@ export function Sessions() {
           </div>
         )}
       </main>
+
+      <Dialog.Root
+        open={!!pendingDelete}
+        onOpenChange={(open) => !open && setPendingDelete(null)}
+      >
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 bg-black/50" />
+          <Dialog.Content className="fixed top-[24%] left-1/2 -translate-x-1/2 w-[520px] bg-page border border-border">
+            <div className="flex items-start justify-between px-7 py-6 border-b border-border">
+              <Dialog.Title className="font-display text-[18px] font-semibold text-primary">
+                Delete this session?
+              </Dialog.Title>
+              <Dialog.Close asChild>
+                <button className="text-muted hover:text-primary">
+                  <X size={18} />
+                </button>
+              </Dialog.Close>
+            </div>
+            <div className="px-7 py-6 flex flex-col gap-4">
+              <p className="text-secondary text-[14px] leading-relaxed">
+                This permanently deletes the session row, its batch JSONLs,
+                the cached key tree, and any cached WPILog. The RavenLink
+                upload history on disk is unaffected.
+              </p>
+              {pendingDelete && (
+                <div className="bg-surface border border-border px-4 py-3 text-[13px] font-mono text-primary">
+                  {pendingDelete.sessionId}
+                  {pendingDelete.matchLabel && (
+                    <span className="text-muted"> · {pendingDelete.matchLabel}</span>
+                  )}
+                </div>
+              )}
+              {del.isError && (
+                <p className="text-accent text-[13px]">
+                  Delete failed. {String((del.error as Error).message)}
+                </p>
+              )}
+            </div>
+            <div className="flex justify-end gap-3 px-7 py-5 border-t border-border">
+              <Dialog.Close asChild>
+                <Button variant="secondary" type="button">
+                  Cancel
+                </Button>
+              </Dialog.Close>
+              <Button
+                variant="destructive"
+                onClick={() => pendingDelete && del.mutate(pendingDelete)}
+                disabled={del.isPending || !pendingDelete}
+              >
+                {del.isPending ? "Deleting…" : "Delete session"}
+              </Button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
     </div>
   )
 }
