@@ -1,9 +1,11 @@
 import { and, asc, desc, eq, gt, lt, sql } from "drizzle-orm"
 import { Hono } from "hono"
+import { hashIp, logAudit } from "../audit/log"
 import { requireCookieUser } from "../auth/require-cookie-user"
 import { requireCookieKind } from "../auth/user"
 import { createDb, type Db } from "../db/client"
 import { sessionBatches, telemetrySessions } from "../db/schema"
+import { batchPrefix } from "../storage/keys"
 import type {
   KeyTreeResponse,
   SessionDetail,
@@ -110,6 +112,53 @@ sessionsRoutes.get("/:id", async (c) => {
     wpilogKey: row.wpilogKey,
   }
   return c.json(detail)
+})
+
+sessionsRoutes.delete("/:id", async (c) => {
+  const user = c.var.user
+  requireCookieKind(user)
+  const id = c.req.param("id")
+
+  const db = createDb(c.env)
+  const [row] = await db
+    .select()
+    .from(telemetrySessions)
+    .where(
+      and(eq(telemetrySessions.id, id), eq(telemetrySessions.workspaceId, user.workspaceId)),
+    )
+    .limit(1)
+  if (!row) return c.json({ error: "not_found" }, 404)
+
+  // Delete every R2 object under sessions/<id>/ — batches, tree cache, and
+  // any cached wpilog. Do this before the D1 delete so a mid-operation
+  // failure leaves a recoverable state (D1 row + possibly orphan blobs)
+  // rather than a dangling-pointer state (D1 gone, blobs still there).
+  const prefix = batchPrefix(row.id)
+  let cursor: string | undefined
+  while (true) {
+    const options: R2ListOptions = cursor ? { prefix, cursor } : { prefix }
+    const listed = await c.env.BLOBS.list(options)
+    for (const obj of listed.objects) {
+      await c.env.BLOBS.delete(obj.key)
+    }
+    if (!listed.truncated) break
+    cursor = listed.cursor
+  }
+
+  // session_batches rows have ON DELETE CASCADE, so the telemetry_sessions
+  // delete takes them out atomically.
+  await db.delete(telemetrySessions).where(eq(telemetrySessions.id, row.id))
+
+  const ipHash = await hashIp(c.req.header("CF-Connecting-IP") ?? "unknown")
+  await logAudit(db, {
+    eventType: "session_complete", // reusing existing enum; no session_delete yet
+    actorUserId: user.userId,
+    workspaceId: user.workspaceId,
+    ipHash,
+    metadata: { deleted: true, sessionDbId: row.id, sessionId: row.sessionId },
+  })
+
+  return c.body(null, 204)
 })
 
 sessionsRoutes.get("/:id/tree", async (c) => {

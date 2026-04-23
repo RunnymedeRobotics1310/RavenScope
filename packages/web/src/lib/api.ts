@@ -110,6 +110,11 @@ export function sessionDownloadUrl(id: string): string {
   return `/api/sessions/${id}/wpilog`
 }
 
+export async function deleteSession(id: string): Promise<void> {
+  const { status } = await request(`/api/sessions/${id}`, { method: "DELETE" })
+  if (status !== 204) throw new Error(`delete ${id} returned ${status}`)
+}
+
 export async function fetchApiKeys(): Promise<ApiKeyListResponse> {
   const { data, status } = await request<ApiKeyListResponse>("/api/keys")
   if (status !== 200 || !data) throw new Error(`/api/keys returned ${status}`)

@@ -17,7 +17,11 @@ export function SessionRow({ session }: SessionRowProps) {
     >
       <div className="flex-1 min-w-0">
         <div className="font-medium text-primary truncate">
-          {session.fmsEventName ?? "(no event name)"}
+          {session.fmsEventName ? (
+            session.fmsEventName
+          ) : (
+            <span className="font-mono">{session.sessionId}</span>
+          )}
         </div>
         <div className="text-[12px] text-muted mt-0.5">
           Team {session.teamNumber} · {fmtShortDate(started)}

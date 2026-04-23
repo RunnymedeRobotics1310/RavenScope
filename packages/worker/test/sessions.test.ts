@@ -286,6 +286,69 @@ describe("GET /api/sessions/:id — detail", () => {
   })
 })
 
+/* --- DELETE /api/sessions/:id -------------------------------------- */
+
+describe("DELETE /api/sessions/:id — delete", () => {
+  it("deletes the row, cascades batches, and wipes R2 objects under the session prefix", async () => {
+    const a = await signInAs("del@test.local")
+    const id = await seedSession(a.workspaceId, { sessionId: "to-delete" })
+    await seedBatch(id, 1, [entry("/A", "double")])
+    await seedBatch(id, 2, [entry("/B", "string")])
+
+    // Seed a fake cached wpilog + tree.json too so we verify they're nuked.
+    await env.BLOBS.put(`sessions/${id}/session.wpilog`, new Uint8Array([0, 1, 2]))
+    await env.BLOBS.put(`sessions/${id}/tree.json`, new TextEncoder().encode("{}"))
+
+    const before = await env.BLOBS.list({ prefix: `sessions/${id}/` })
+    expect(before.objects.length).toBeGreaterThanOrEqual(4)
+
+    const res = await SELF.fetch(`${BASE}/api/sessions/${id}`, {
+      method: "DELETE",
+      headers: { Cookie: a.cookie },
+    })
+    expect(res.status).toBe(204)
+
+    const db = createDb(env)
+    const rows = await db
+      .select()
+      .from(telemetrySessions)
+      .where(eq(telemetrySessions.id, id))
+    expect(rows).toHaveLength(0)
+    const batches = await db
+      .select()
+      .from(sessionBatches)
+      .where(eq(sessionBatches.sessionId, id))
+    expect(batches).toHaveLength(0)
+    const after = await env.BLOBS.list({ prefix: `sessions/${id}/` })
+    expect(after.objects).toHaveLength(0)
+  })
+
+  it("404 across workspaces (no existence leak, no cross-tenant deletion)", async () => {
+    const a = await signInAs("del-a@test.local")
+    const b = await signInAs("del-b@test.local")
+    const id = await seedSession(b.workspaceId, { sessionId: "b-owned" })
+    await seedBatch(id, 1, [entry("/A", "double")])
+
+    const res = await SELF.fetch(`${BASE}/api/sessions/${id}`, {
+      method: "DELETE",
+      headers: { Cookie: a.cookie },
+    })
+    expect(res.status).toBe(404)
+
+    const db = createDb(env)
+    const stillThere = await db
+      .select()
+      .from(telemetrySessions)
+      .where(eq(telemetrySessions.id, id))
+    expect(stillThere).toHaveLength(1)
+  })
+
+  it("requires cookie auth", async () => {
+    const res = await SELF.fetch(`${BASE}/api/sessions/any-id`, { method: "DELETE" })
+    expect(res.status).toBe(401)
+  })
+})
+
 /* --- GET /api/sessions/:id/tree ------------------------------------ */
 
 describe("GET /api/sessions/:id/tree", () => {

@@ -1,11 +1,13 @@
-import { useQuery } from "@tanstack/react-query"
-import { ChevronLeft, Search } from "lucide-react"
+import * as Dialog from "@radix-ui/react-dialog"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { ChevronLeft, Search, X } from "lucide-react"
 import { useState } from "react"
-import { Link, useParams } from "react-router-dom"
+import { Link, useNavigate, useParams } from "react-router-dom"
 import { Button } from "../components/Button"
 import { KeyTree } from "../components/KeyTree"
 import { TopNav } from "../components/TopNav"
 import {
+  deleteSession,
   fetchSessionDetail,
   fetchSessionTree,
   sessionDownloadUrl,
@@ -13,7 +15,10 @@ import {
 
 export function SessionDetail() {
   const { id = "" } = useParams()
+  const nav = useNavigate()
+  const qc = useQueryClient()
   const [treeSearch, setTreeSearch] = useState("")
+  const [confirmOpen, setConfirmOpen] = useState(false)
 
   const detail = useQuery({
     queryKey: ["session", id],
@@ -25,6 +30,14 @@ export function SessionDetail() {
     queryKey: ["session", id, "tree"],
     queryFn: () => fetchSessionTree(id),
     enabled: !!id,
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: () => deleteSession(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["sessions"] })
+      nav("/", { replace: true })
+    },
   })
 
   return (
@@ -54,12 +67,25 @@ export function SessionDetail() {
                     )}
                   </span>
                 </div>
-                <a href={sessionDownloadUrl(id)} download>
-                  <Button variant="primary">Download .wpilog</Button>
-                </a>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="destructive"
+                    onClick={() => setConfirmOpen(true)}
+                    disabled={deleteMutation.isPending}
+                  >
+                    Delete
+                  </Button>
+                  <a href={sessionDownloadUrl(id)} download>
+                    <Button variant="primary">Download .wpilog</Button>
+                  </a>
+                </div>
               </div>
               <h1 className="font-display text-[40px] font-medium leading-tight tracking-[-1px] text-primary">
-                {detail.data.matchLabel ?? detail.data.sessionId}
+                {detail.data.matchLabel ? (
+                  detail.data.matchLabel
+                ) : (
+                  <span className="font-mono">{detail.data.sessionId}</span>
+                )}
               </h1>
               <div className="flex flex-wrap gap-12">
                 <Stat label="Event" value={detail.data.fmsEventName ?? "—"} mono={false} />
@@ -142,6 +168,58 @@ export function SessionDetail() {
           </>
         )}
       </main>
+
+      <Dialog.Root open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 bg-black/50" />
+          <Dialog.Content className="fixed top-[24%] left-1/2 -translate-x-1/2 w-[520px] bg-page border border-border">
+            <div className="flex items-start justify-between px-7 py-6 border-b border-border">
+              <Dialog.Title className="font-display text-[18px] font-semibold text-primary">
+                Delete this session?
+              </Dialog.Title>
+              <Dialog.Close asChild>
+                <button className="text-muted hover:text-primary">
+                  <X size={18} />
+                </button>
+              </Dialog.Close>
+            </div>
+            <div className="px-7 py-6 flex flex-col gap-4">
+              <p className="text-secondary text-[14px] leading-relaxed">
+                This permanently deletes the session row, its batch JSONLs,
+                the cached key tree, and any cached WPILog. The RavenLink
+                upload history on disk is unaffected.
+              </p>
+              {detail.data && (
+                <div className="bg-surface border border-border px-4 py-3 text-[13px] font-mono text-primary">
+                  {detail.data.sessionId}
+                  {detail.data.matchLabel && (
+                    <span className="text-muted"> · {detail.data.matchLabel}</span>
+                  )}
+                </div>
+              )}
+              {deleteMutation.isError && (
+                <p className="text-accent text-[13px]">
+                  Delete failed. {String((deleteMutation.error as Error).message)}
+                </p>
+              )}
+            </div>
+            <div className="flex justify-end gap-3 px-7 py-5 border-t border-border">
+              <Dialog.Close asChild>
+                <Button variant="secondary" type="button">
+                  Cancel
+                </Button>
+              </Dialog.Close>
+              <Button
+                variant="destructive"
+                onClick={() => deleteMutation.mutate()}
+                disabled={deleteMutation.isPending}
+              >
+                {deleteMutation.isPending ? "Deleting…" : "Delete session"}
+              </Button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
     </div>
   )
 }
