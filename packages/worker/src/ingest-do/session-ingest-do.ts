@@ -93,10 +93,19 @@ export class SessionIngestDO implements DurableObject {
       } catch (err) {
         if (err instanceof QuotaExceededError) {
           // Surface the 429 through the DO→Worker fetch boundary with
-          // a status code the Worker route can pass through as-is.
+          // a status code the Worker route can pass through as-is. The
+          // firstBreach header tells the Worker to fire the operator
+          // alert + audit log via its own ctx.waitUntil (keeps Resend
+          // off the critical path of the 429 response).
+          const headers: Record<string, string> = {
+            "Retry-After": String(err.retryAfter),
+          }
+          if (err.firstBreach) {
+            headers["X-Quota-First-Breach"] = err.metric
+          }
           return new Response(`quota_cap_hit: ${err.metric}`, {
             status: 429,
-            headers: { "Retry-After": String(err.retryAfter) },
+            headers,
           })
         }
         return new Response(`r2_write_failed: ${String(err)}`, { status: 503 })

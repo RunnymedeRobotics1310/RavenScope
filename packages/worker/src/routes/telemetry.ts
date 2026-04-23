@@ -13,6 +13,7 @@ import type {
   TelemetrySessionResponse,
 } from "../dto"
 import type { Env } from "../env"
+import { scheduleDoAlert } from "../quota/http"
 
 export const telemetryRoutes = new Hono<{ Bindings: Env }>()
 telemetryRoutes.use("*", requireApiKeyUser)
@@ -119,6 +120,10 @@ telemetryRoutes.post("/session/:sessionId/data", async (c) => {
     body: JSON.stringify({ sessionDbId: row.id, entries }),
   })
   if (res.status === 429) {
+    // On the 0→1 latch flip (signalled by X-Quota-First-Breach), fire the
+    // operator alert + audit log via ctx.waitUntil. Subsequent 429s in
+    // the same UTC day carry no header and pass straight through.
+    scheduleDoAlert(c, res, user.workspaceId)
     return new Response(await res.text(), {
       status: 429,
       headers: {

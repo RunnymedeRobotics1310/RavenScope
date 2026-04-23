@@ -54,6 +54,12 @@ export default defineWorkersConfig(async () => {
                 v1: "dGVzdC1zZWNyZXQtMzItYnl0ZXMtbG9uZy1mb3ItaG1hYy1rZXk=",
               }),
               RESEND_API_KEY: "re_test_key",
+              // Real-looking value so handleQuotaExceeded's alert path is
+              // exercised in tests. Tests that trigger cap breaches must
+              // activate fetchMock (see quota-enforcement.test.ts,
+              // quota-alert.test.ts) so the Resend POST is intercepted;
+              // tests that don't breach the caps never fire it.
+              OPERATOR_EMAIL: "operator@test.local",
               TEST_MIGRATIONS: migrations,
               FIXTURE_SAMPLE_JSONL_B64: sampleJsonlB64,
               FIXTURE_SAMPLE_WPILOG_B64: sampleWpilogB64,

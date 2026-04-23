@@ -17,3 +17,7 @@ RESEND_API_KEY=re_YOUR_KEY_HERE
 
 # Overrides the wrangler.toml [vars] entry for local dev only.
 EMAIL_FROM=no-reply@ravenscope.local
+
+# Where daily-cap breach alerts go. Leave blank in dev to disable alerts
+# (the 429 enforcement and audit log still fire).
+OPERATOR_EMAIL=

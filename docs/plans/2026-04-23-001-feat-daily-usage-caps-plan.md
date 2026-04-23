@@ -184,7 +184,7 @@ orders of magnitude below the proposed caps.
 
 ## Implementation Units
 
-- [ ] U1. **daily_quota table + chargeQuota helper**
+- [x] U1. **daily_quota table + chargeQuota helper**
 
 **Goal:** Add a global per-day counter with atomic UPSERT-and-check
 semantics, plus a helper that callers use to pre-charge a specific metric.
@@ -280,7 +280,7 @@ semantics, plus a helper that callers use to pre-charge a specific metric.
 
 ---
 
-- [ ] U2. **Wire chargeQuota into storage + ingest paths; surface 429**
+- [x] U2. **Wire chargeQuota into storage + ingest paths; surface 429**
 
 **Goal:** Every R2 op that writes data (Class A) or reads data (Class B)
 routes through the quota helper; the ingest route translates a cap miss
@@ -362,7 +362,7 @@ lowered cap (e.g. `CAP_BYTES = 100`) reproduces the 429 flow end-to-end.
 
 ---
 
-- [ ] U3. **OPERATOR_EMAIL var + alert email on first breach**
+- [x] U3. **OPERATOR_EMAIL var + alert email on first breach**
 
 **Goal:** On the 0 → 1 transition of any `alerted_*` flag, send one
 transactional email to `OPERATOR_EMAIL` with the metric, cap value,

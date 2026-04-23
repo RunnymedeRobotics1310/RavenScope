@@ -40,6 +40,9 @@ bucket_name = "ravenscope-blobs"
 
 [vars]
 EMAIL_FROM = "no-reply@ravenscope.example.com"
+# Receives daily-cap breach alerts (one email per metric per day). Empty
+# string disables alerts; 429 enforcement still fires.
+OPERATOR_EMAIL = "jeff@zakr.ca"
 
 # Secrets (set via `wrangler secret put`):
 #   SESSION_SECRET — JSON map {"v1":"<32-byte-base64>"}

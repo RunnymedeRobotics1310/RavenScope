@@ -1,6 +1,14 @@
-import { env, SELF } from "cloudflare:test"
+import { env, fetchMock, SELF } from "cloudflare:test"
 import { sql } from "drizzle-orm"
-import { beforeEach, describe, expect, it } from "vitest"
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from "vitest"
 import { generateApiKey } from "../src/auth/apikey"
 import { createDb } from "../src/db/client"
 import {
@@ -115,8 +123,26 @@ async function readQuota() {
   return row
 }
 
+beforeAll(() => {
+  fetchMock.activate()
+  fetchMock.disableNetConnect()
+})
+
+afterAll(() => {
+  fetchMock.deactivate()
+})
+
 beforeEach(async () => {
   await wipeAll()
+  // Each first-breach 429 fires an operator-alert email via ctx.waitUntil.
+  // Consume those with a permissive persistent interceptor so the tests
+  // focus on the 429 contract, not the email body (see quota-alert.test.ts
+  // for dedicated alert coverage).
+  fetchMock
+    .get("https://api.resend.com")
+    .intercept({ path: "/emails", method: "POST" })
+    .reply(200, { id: "silenced" })
+    .persist()
 })
 
 describe("daily quota enforcement on /api/telemetry/{id}/data", () => {

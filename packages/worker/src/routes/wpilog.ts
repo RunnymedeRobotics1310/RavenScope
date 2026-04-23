@@ -6,7 +6,7 @@ import { createDb } from "../db/client"
 import { telemetrySessions } from "../db/schema"
 import type { Env } from "../env"
 import { chargeOrThrow, QuotaExceededError } from "../quota/daily-quota"
-import { cappedResponse } from "../quota/http"
+import { handleQuotaExceeded } from "../quota/http"
 import {
   R2MultipartWpilogWriter,
   readPlainBlobStream,
@@ -53,7 +53,7 @@ wpilogRoutes.get("/:id/wpilog", async (c) => {
       // Charge the cache-hit read as one Class B op.
       await chargeOrThrow(c.env, { classB: 1 })
     } catch (err) {
-      if (err instanceof QuotaExceededError) return cappedResponse(err)
+      if (err instanceof QuotaExceededError) return handleQuotaExceeded(c, err, user.workspaceId)
       throw err
     }
     const cached = await c.env.BLOBS.get(session.wpilogKey!)
@@ -77,7 +77,7 @@ wpilogRoutes.get("/:id/wpilog", async (c) => {
   } catch (err) {
     await writer.abort().catch(() => {})
     if (err instanceof QuotaExceededError) {
-      return cappedResponse(err)
+      return handleQuotaExceeded(c, err, user.workspaceId)
     }
     return c.text(`wpilog_generation_failed: ${String(err)}`, 503)
   }

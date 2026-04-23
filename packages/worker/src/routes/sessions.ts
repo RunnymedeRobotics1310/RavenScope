@@ -16,6 +16,8 @@ import type {
 } from "../dto"
 import type { Env } from "../env"
 import { buildTree, cacheTree, loadCachedTree } from "../ingest/tree-builder"
+import { QuotaExceededError } from "../quota/daily-quota"
+import { handleQuotaExceeded } from "../quota/http"
 
 const DEFAULT_LIMIT = 25
 const MAX_LIMIT = 100
@@ -230,15 +232,22 @@ sessionsRoutes.get("/:id/tree", async (c) => {
     .limit(1)
   if (!row) return c.json({ error: "not_found" }, 404)
 
-  // Serve from cache if fresh relative to the latest batch.
-  const cached = await loadCachedTree(c.env, row.id)
-  if (cached && isCacheFresh(cached, row.lastBatchAt)) {
-    return c.json(cached satisfies KeyTreeResponse)
-  }
+  try {
+    // Serve from cache if fresh relative to the latest batch.
+    const cached = await loadCachedTree(c.env, row.id)
+    if (cached && isCacheFresh(cached, row.lastBatchAt)) {
+      return c.json(cached satisfies KeyTreeResponse)
+    }
 
-  const tree = await buildTree(c.env, row.id)
-  await cacheTree(c.env, row.id, tree)
-  return c.json(tree satisfies KeyTreeResponse)
+    const tree = await buildTree(c.env, row.id)
+    await cacheTree(c.env, row.id, tree)
+    return c.json(tree satisfies KeyTreeResponse)
+  } catch (err) {
+    if (err instanceof QuotaExceededError) {
+      return handleQuotaExceeded(c, err, user.workspaceId)
+    }
+    throw err
+  }
 })
 
 function isCacheFresh(cached: KeyTreeResponse, lastBatchAt: Date | null): boolean {
