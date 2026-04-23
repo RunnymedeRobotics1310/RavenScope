@@ -22,6 +22,16 @@ export function SessionRow({ session, onRequestDelete }: SessionRowProps) {
         to={`/sessions/${session.id}`}
         className="flex flex-1 items-center gap-6 min-w-0 focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       >
+        <div className="w-56 shrink-0">
+          <div className="text-[13px] text-primary">{fmtDateTime(started)}</div>
+          <div className="text-[12px] text-muted">{fmtAgo(started)}</div>
+        </div>
+        <div className="w-32 font-mono text-[13px] text-primary shrink-0">
+          {durationMs > 0 ? fmtDuration(durationMs) : "—"}
+        </div>
+        <div className="w-32 flex justify-end font-mono text-[13px] text-primary shrink-0">
+          {session.entryCount.toLocaleString()}
+        </div>
         <div className="flex-1 min-w-0">
           <div className="font-medium text-primary truncate">
             {session.fmsEventName ? (
@@ -36,16 +46,6 @@ export function SessionRow({ session, onRequestDelete }: SessionRowProps) {
         </div>
         <div className="w-40 font-mono text-[13px] text-primary shrink-0">
           {session.matchLabel ?? "—"}
-        </div>
-        <div className="w-56 shrink-0">
-          <div className="text-[13px] text-primary">{fmtDateTime(started)}</div>
-          <div className="text-[12px] text-muted">{fmtAgo(started)}</div>
-        </div>
-        <div className="w-32 font-mono text-[13px] text-primary shrink-0">
-          {durationMs > 0 ? fmtDuration(durationMs) : "—"}
-        </div>
-        <div className="w-32 flex justify-end font-mono text-[13px] text-primary shrink-0">
-          {session.entryCount.toLocaleString()}
         </div>
       </Link>
       <div className="w-24 flex justify-end items-center gap-1 shrink-0">

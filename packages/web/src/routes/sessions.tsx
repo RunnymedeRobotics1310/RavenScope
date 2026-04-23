@@ -66,6 +66,19 @@ export function Sessions() {
         <div className="border border-border">
           <header className="flex items-center gap-6 px-5 py-3.5 bg-surface border-b border-border text-[12px] font-display font-medium text-secondary">
             <SortHeader
+              label="Started"
+              className="w-56"
+              field="started_at"
+              current={sort}
+              order={order}
+              onToggle={(next) => {
+                setSort(next.sort)
+                setOrder(next.order)
+              }}
+            />
+            <span className="w-32">Duration</span>
+            <span className="w-32 text-right">Entries</span>
+            <SortHeader
               label="Event"
               className="flex-1 min-w-0"
               field="fms_event_name"
@@ -87,19 +100,6 @@ export function Sessions() {
                 setOrder(next.order)
               }}
             />
-            <SortHeader
-              label="Started"
-              className="w-56"
-              field="started_at"
-              current={sort}
-              order={order}
-              onToggle={(next) => {
-                setSort(next.sort)
-                setOrder(next.order)
-              }}
-            />
-            <span className="w-32">Duration</span>
-            <span className="w-32 text-right">Entries</span>
             <span className="w-24 text-right">Actions</span>
           </header>
 
