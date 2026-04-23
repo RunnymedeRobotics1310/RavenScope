@@ -1,0 +1,152 @@
+#!/usr/bin/env bash
+#
+# One-shot Cloudflare bootstrap for a fresh RavenScope deployment.
+# Idempotent: safe to re-run; only creates resources that don't exist.
+#
+# Prerequisites:
+#   - Cloudflare account with Workers, D1, and R2 enabled (all on free tier)
+#   - `wrangler` CLI installed (pnpm install already pulls it in)
+#   - A Resend API key (https://resend.com/api-keys)
+#   - You've run `wrangler login` at least once
+#
+# Usage:
+#   scripts/setup.sh
+#
+# After the script completes, run `pnpm build && wrangler deploy` from
+# packages/worker to push the Worker to your account.
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+WORKER_DIR="${ROOT}/packages/worker"
+WRANGLER_TOML="${WORKER_DIR}/wrangler.toml"
+
+# Colors — only when stderr is a tty.
+if [[ -t 2 ]]; then
+  BOLD=$'\033[1m'; DIM=$'\033[2m'; RED=$'\033[31m'; GREEN=$'\033[32m'; RESET=$'\033[0m'
+else
+  BOLD=''; DIM=''; RED=''; GREEN=''; RESET=''
+fi
+
+log()  { printf "${BOLD}▸${RESET} %s\n" "$1" >&2; }
+ok()   { printf "${GREEN}✓${RESET} %s\n" "$1" >&2; }
+warn() { printf "${RED}!${RESET} %s\n" "$1" >&2; }
+die()  { printf "${RED}✗${RESET} %s\n" "$1" >&2; exit 1; }
+
+# --- pre-flight ------------------------------------------------------
+
+command -v wrangler >/dev/null 2>&1 || die "wrangler not found — run 'pnpm install' first."
+command -v jq >/dev/null 2>&1 || die "jq not found — brew install jq (or the equivalent)."
+
+wrangler whoami >/dev/null 2>&1 || die "wrangler login required. Run 'wrangler login' and retry."
+
+log "wrangler authenticated as $(wrangler whoami 2>&1 | grep -Eo 'email [^ ]+' | head -1 || echo 'unknown')"
+
+# --- D1 database -----------------------------------------------------
+
+log "ensuring D1 database 'ravenscope' exists"
+D1_JSON="$(wrangler d1 list --json 2>/dev/null || echo '[]')"
+D1_ID="$(echo "$D1_JSON" | jq -r '.[] | select(.name=="ravenscope") | .uuid')"
+if [[ -z "$D1_ID" ]]; then
+  CREATE_OUT="$(wrangler d1 create ravenscope 2>&1 || true)"
+  D1_ID="$(echo "$CREATE_OUT" | grep -Eo '"database_id":[[:space:]]*"[^"]+"' | head -1 | sed 's/.*"\([^"]*\)".*/\1/')"
+  [[ -n "$D1_ID" ]] || die "failed to create D1 database. Output:\n$CREATE_OUT"
+  ok "created D1 database $D1_ID"
+else
+  ok "D1 database already exists ($D1_ID)"
+fi
+
+# Swap the database_id placeholder in wrangler.toml with the real ID.
+# Preserves a backup at wrangler.toml.bak on the first successful run.
+if grep -q 'REPLACE_ME_AFTER_wrangler_d1_create' "$WRANGLER_TOML"; then
+  cp "$WRANGLER_TOML" "${WRANGLER_TOML}.bak"
+  sed -i.tmp "s|REPLACE_ME_AFTER_wrangler_d1_create|${D1_ID}|" "$WRANGLER_TOML"
+  rm "${WRANGLER_TOML}.tmp"
+  ok "wrote D1 database_id into wrangler.toml"
+else
+  ok "wrangler.toml already references a concrete database_id"
+fi
+
+# --- R2 bucket -------------------------------------------------------
+
+log "ensuring R2 bucket 'ravenscope-blobs' exists"
+R2_JSON="$(wrangler r2 bucket list --json 2>/dev/null || echo '{}')"
+R2_EXISTS="$(echo "$R2_JSON" | jq -r '.buckets[]?.name // empty' | grep -Fx "ravenscope-blobs" || true)"
+if [[ -z "$R2_EXISTS" ]]; then
+  wrangler r2 bucket create ravenscope-blobs >/dev/null
+  ok "created R2 bucket ravenscope-blobs"
+else
+  ok "R2 bucket ravenscope-blobs already exists"
+fi
+
+# R2 privacy check: neither the r2.dev subdomain nor a custom domain
+# should be enabled. wrangler's `r2 bucket domain list` subcommand
+# reports both in wrangler v3/v4.
+log "verifying R2 bucket has no public access"
+DOMAIN_JSON="$(wrangler r2 bucket domain list ravenscope-blobs --json 2>/dev/null || echo '{}')"
+R2_DEV_ENABLED="$(echo "$DOMAIN_JSON" | jq -r '.r2_dev?.enabled // false')"
+CUSTOM_DOMAINS="$(echo "$DOMAIN_JSON" | jq -r '.domains[]?.domain // empty' | wc -l | tr -d ' ')"
+if [[ "$R2_DEV_ENABLED" == "true" ]]; then
+  die "R2 bucket has the r2.dev subdomain enabled — disable it in the dashboard before deploying (Settings → R2.dev subdomain)."
+fi
+if [[ "$CUSTOM_DOMAINS" != "0" ]]; then
+  die "R2 bucket has $CUSTOM_DOMAINS custom domain(s) attached — remove them before deploying."
+fi
+ok "R2 bucket is private (no r2.dev, no custom domain)"
+
+# --- D1 migrations ---------------------------------------------------
+
+log "applying D1 migrations to remote"
+(cd "$WORKER_DIR" && wrangler d1 migrations apply DB --remote) >/dev/null
+ok "D1 migrations applied"
+
+# --- SESSION_SECRET --------------------------------------------------
+
+if wrangler secret list --config "$WRANGLER_TOML" 2>/dev/null | grep -q SESSION_SECRET; then
+  ok "SESSION_SECRET already set"
+else
+  log "generating 32-byte SESSION_SECRET"
+  SECRET_VALUE="$(node -e "console.log(JSON.stringify({v1: require('crypto').randomBytes(32).toString('base64')}))")"
+  echo "$SECRET_VALUE" | wrangler secret put SESSION_SECRET --config "$WRANGLER_TOML" >/dev/null
+  ok "SESSION_SECRET set (stored encrypted in Cloudflare — not shown)"
+fi
+
+# --- RESEND_API_KEY --------------------------------------------------
+
+if wrangler secret list --config "$WRANGLER_TOML" 2>/dev/null | grep -q RESEND_API_KEY; then
+  ok "RESEND_API_KEY already set"
+else
+  printf "\n${DIM}Paste your Resend API key (https://resend.com/api-keys).${RESET}\n" >&2
+  printf "Key: " >&2
+  read -rs RESEND_KEY
+  printf "\n" >&2
+  [[ "$RESEND_KEY" =~ ^re_ ]] || warn "doesn't look like a Resend key (expected re_…) — continuing anyway"
+  echo "$RESEND_KEY" | wrangler secret put RESEND_API_KEY --config "$WRANGLER_TOML" >/dev/null
+  ok "RESEND_API_KEY set"
+fi
+
+# --- EMAIL_FROM ------------------------------------------------------
+
+CURRENT_FROM="$(grep -E '^EMAIL_FROM' "$WRANGLER_TOML" | sed -E 's/.*"([^"]*)".*/\1/' || true)"
+if [[ "$CURRENT_FROM" == "no-reply@ravenscope.example.com" || -z "$CURRENT_FROM" ]]; then
+  printf "\n${DIM}Enter the from-address for magic-link emails (must be a verified${RESET}\n" >&2
+  printf "${DIM}sender in Resend). Example: no-reply@ravenscope.yourdomain.com${RESET}\n" >&2
+  printf "From: " >&2
+  read -r FROM_ADDR
+  [[ -n "$FROM_ADDR" ]] || die "EMAIL_FROM is required."
+  # Replace the existing EMAIL_FROM line in-place.
+  sed -i.tmp "s|^EMAIL_FROM = \".*\"|EMAIL_FROM = \"${FROM_ADDR}\"|" "$WRANGLER_TOML"
+  rm "${WRANGLER_TOML}.tmp"
+  ok "EMAIL_FROM set to ${FROM_ADDR}"
+else
+  ok "EMAIL_FROM already set to ${CURRENT_FROM}"
+fi
+
+# --- final summary ---------------------------------------------------
+
+printf "\n${GREEN}${BOLD}Setup complete.${RESET}\n" >&2
+printf "\nNext steps:\n" >&2
+printf "  1. ${BOLD}pnpm -r build${RESET}\n" >&2
+printf "  2. ${BOLD}cd packages/worker && wrangler deploy${RESET}\n" >&2
+printf "  3. Sign in at your Worker URL and mint an API key for RavenLink.\n" >&2
+printf "\nSESSION_SECRET rotation (when needed): see README → 'Rotating SESSION_SECRET'.\n" >&2
