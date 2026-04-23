@@ -3,7 +3,20 @@
 /*
  * RavenScope design tokens — 1:1 mapping from docs/design/ravenscope-ui.pen (Unit 0-C).
  * Dark-mode values are the v1 default; light-mode values are kept as comments for future theming.
+ *
+ * Body-level application is load-bearing: without it, routes that don't
+ * carry bg-page on their outermost element (sign-in, check-email) would
+ * render on the browser's white default and the light text tokens would
+ * be invisible.
  */
+html,
+body,
+#root {
+  background-color: var(--color-page);
+  color: var(--color-primary);
+  color-scheme: dark;
+}
+
 @theme {
   --color-page: #0b0b0d; /* light: #ffffff */
   --color-surface: #15151a; /* light: #fafafa */
