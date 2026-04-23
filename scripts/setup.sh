@@ -5,15 +5,16 @@
 #
 # Prerequisites:
 #   - Cloudflare account with Workers, D1, and R2 enabled (all on free tier)
-#   - `wrangler` CLI installed (pnpm install already pulls it in)
+#   - You've run `pnpm install` at the repo root (installs wrangler locally)
+#   - You've run `pnpm --filter @ravenscope/worker exec wrangler login` once
 #   - A Resend API key (https://resend.com/api-keys)
-#   - You've run `wrangler login` at least once
+#   - jq installed (brew install jq / apt install jq / etc.)
 #
-# Usage:
+# Usage (from repo root):
 #   scripts/setup.sh
 #
-# After the script completes, run `pnpm build && wrangler deploy` from
-# packages/worker to push the Worker to your account.
+# After the script completes, run `pnpm build` then `pnpm -F
+# @ravenscope/worker exec wrangler deploy` to push the Worker.
 
 set -euo pipefail
 
@@ -33,22 +34,30 @@ ok()   { printf "${GREEN}✓${RESET} %s\n" "$1" >&2; }
 warn() { printf "${RED}!${RESET} %s\n" "$1" >&2; }
 die()  { printf "${RED}✗${RESET} %s\n" "$1" >&2; exit 1; }
 
+# Runs wrangler via the worker package's local install. Resolves
+# wrangler.toml automatically because cwd is the worker package dir.
+wrangler_cmd() { (cd "$WORKER_DIR" && pnpm exec wrangler "$@"); }
+
 # --- pre-flight ------------------------------------------------------
 
-command -v wrangler >/dev/null 2>&1 || die "wrangler not found — run 'pnpm install' first."
+command -v pnpm >/dev/null 2>&1 || die "pnpm not found — install pnpm first (https://pnpm.io/installation)."
 command -v jq >/dev/null 2>&1 || die "jq not found — brew install jq (or the equivalent)."
+command -v node >/dev/null 2>&1 || die "node not found — install Node 20+ first."
 
-wrangler whoami >/dev/null 2>&1 || die "wrangler login required. Run 'wrangler login' and retry."
+# Verify the local wrangler install is usable.
+wrangler_cmd --version >/dev/null 2>&1 || die "wrangler not found locally. Run 'pnpm install' at the repo root first."
 
-log "wrangler authenticated as $(wrangler whoami 2>&1 | grep -Eo 'email [^ ]+' | head -1 || echo 'unknown')"
+wrangler_cmd whoami >/dev/null 2>&1 || die "wrangler not logged in. Run 'pnpm -F @ravenscope/worker exec wrangler login' and retry."
+
+log "wrangler authenticated ($(wrangler_cmd whoami 2>&1 | grep -Eo 'email [^ ]+' | head -1 || echo 'account OK'))"
 
 # --- D1 database -----------------------------------------------------
 
 log "ensuring D1 database 'ravenscope' exists"
-D1_JSON="$(wrangler d1 list --json 2>/dev/null || echo '[]')"
+D1_JSON="$(wrangler_cmd d1 list --json 2>/dev/null || echo '[]')"
 D1_ID="$(echo "$D1_JSON" | jq -r '.[] | select(.name=="ravenscope") | .uuid')"
 if [[ -z "$D1_ID" ]]; then
-  CREATE_OUT="$(wrangler d1 create ravenscope 2>&1 || true)"
+  CREATE_OUT="$(wrangler_cmd d1 create ravenscope 2>&1 || true)"
   D1_ID="$(echo "$CREATE_OUT" | grep -Eo '"database_id":[[:space:]]*"[^"]+"' | head -1 | sed 's/.*"\([^"]*\)".*/\1/')"
   [[ -n "$D1_ID" ]] || die "failed to create D1 database. Output:\n$CREATE_OUT"
   ok "created D1 database $D1_ID"
@@ -70,10 +79,10 @@ fi
 # --- R2 bucket -------------------------------------------------------
 
 log "ensuring R2 bucket 'ravenscope-blobs' exists"
-R2_JSON="$(wrangler r2 bucket list --json 2>/dev/null || echo '{}')"
+R2_JSON="$(wrangler_cmd r2 bucket list --json 2>/dev/null || echo '{}')"
 R2_EXISTS="$(echo "$R2_JSON" | jq -r '.buckets[]?.name // empty' | grep -Fx "ravenscope-blobs" || true)"
 if [[ -z "$R2_EXISTS" ]]; then
-  wrangler r2 bucket create ravenscope-blobs >/dev/null
+  wrangler_cmd r2 bucket create ravenscope-blobs >/dev/null
   ok "created R2 bucket ravenscope-blobs"
 else
   ok "R2 bucket ravenscope-blobs already exists"
@@ -83,7 +92,7 @@ fi
 # should be enabled. wrangler's `r2 bucket domain list` subcommand
 # reports both in wrangler v3/v4.
 log "verifying R2 bucket has no public access"
-DOMAIN_JSON="$(wrangler r2 bucket domain list ravenscope-blobs --json 2>/dev/null || echo '{}')"
+DOMAIN_JSON="$(wrangler_cmd r2 bucket domain list ravenscope-blobs --json 2>/dev/null || echo '{}')"
 R2_DEV_ENABLED="$(echo "$DOMAIN_JSON" | jq -r '.r2_dev?.enabled // false')"
 CUSTOM_DOMAINS="$(echo "$DOMAIN_JSON" | jq -r '.domains[]?.domain // empty' | wc -l | tr -d ' ')"
 if [[ "$R2_DEV_ENABLED" == "true" ]]; then
@@ -97,23 +106,23 @@ ok "R2 bucket is private (no r2.dev, no custom domain)"
 # --- D1 migrations ---------------------------------------------------
 
 log "applying D1 migrations to remote"
-(cd "$WORKER_DIR" && wrangler d1 migrations apply DB --remote) >/dev/null
+wrangler_cmd d1 migrations apply DB --remote >/dev/null
 ok "D1 migrations applied"
 
 # --- SESSION_SECRET --------------------------------------------------
 
-if wrangler secret list --config "$WRANGLER_TOML" 2>/dev/null | grep -q SESSION_SECRET; then
+if wrangler_cmd secret list 2>/dev/null | grep -q SESSION_SECRET; then
   ok "SESSION_SECRET already set"
 else
   log "generating 32-byte SESSION_SECRET"
   SECRET_VALUE="$(node -e "console.log(JSON.stringify({v1: require('crypto').randomBytes(32).toString('base64')}))")"
-  echo "$SECRET_VALUE" | wrangler secret put SESSION_SECRET --config "$WRANGLER_TOML" >/dev/null
+  echo "$SECRET_VALUE" | wrangler_cmd secret put SESSION_SECRET >/dev/null
   ok "SESSION_SECRET set (stored encrypted in Cloudflare — not shown)"
 fi
 
 # --- RESEND_API_KEY --------------------------------------------------
 
-if wrangler secret list --config "$WRANGLER_TOML" 2>/dev/null | grep -q RESEND_API_KEY; then
+if wrangler_cmd secret list 2>/dev/null | grep -q RESEND_API_KEY; then
   ok "RESEND_API_KEY already set"
 else
   printf "\n${DIM}Paste your Resend API key (https://resend.com/api-keys).${RESET}\n" >&2
@@ -121,7 +130,7 @@ else
   read -rs RESEND_KEY
   printf "\n" >&2
   [[ "$RESEND_KEY" =~ ^re_ ]] || warn "doesn't look like a Resend key (expected re_…) — continuing anyway"
-  echo "$RESEND_KEY" | wrangler secret put RESEND_API_KEY --config "$WRANGLER_TOML" >/dev/null
+  echo "$RESEND_KEY" | wrangler_cmd secret put RESEND_API_KEY >/dev/null
   ok "RESEND_API_KEY set"
 fi
 
@@ -146,7 +155,7 @@ fi
 
 printf "\n${GREEN}${BOLD}Setup complete.${RESET}\n" >&2
 printf "\nNext steps:\n" >&2
-printf "  1. ${BOLD}pnpm -r build${RESET}\n" >&2
-printf "  2. ${BOLD}cd packages/worker && wrangler deploy${RESET}\n" >&2
+printf "  1. ${BOLD}pnpm build${RESET}\n" >&2
+printf "  2. ${BOLD}pnpm -F @ravenscope/worker exec wrangler deploy${RESET}\n" >&2
 printf "  3. Sign in at your Worker URL and mint an API key for RavenLink.\n" >&2
 printf "\nSESSION_SECRET rotation (when needed): see README → 'Rotating SESSION_SECRET'.\n" >&2

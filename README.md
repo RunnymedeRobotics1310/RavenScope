@@ -114,7 +114,10 @@ The script converts a ~2000-line real match JSONL into
 
 - A Cloudflare account with Workers, D1, and R2 enabled (all on free tier)
 - A [Resend](https://resend.com) account with a verified sender domain
-- `wrangler login` run once on your machine
+- `pnpm install` run at the repo root (installs wrangler locally into
+  `packages/worker/node_modules`; no global install needed)
+- A one-time `pnpm -F @ravenscope/worker exec wrangler login`
+- `jq` on your shell path (`brew install jq` / `apt install jq`)
 
 ### One-shot bootstrap
 
@@ -141,8 +144,12 @@ When it's done, deploy:
 
 ```bash
 pnpm build
-cd packages/worker && wrangler deploy
+pnpm -F @ravenscope/worker exec wrangler deploy
 ```
+
+All deployment commands route through the worker package's local
+wrangler install. If you prefer, `cd packages/worker && pnpm exec
+wrangler <cmd>` is equivalent.
 
 ### Continuous deploy (GitHub Actions)
 
@@ -227,7 +234,7 @@ Procedure:
    ```bash
    # Existing SESSION_SECRET = {"v1":"<old>"}
    # New value:               {"v1":"<old>","v2":"<new>"}
-   wrangler secret put SESSION_SECRET --config packages/worker/wrangler.toml
+   pnpm -F @ravenscope/worker exec wrangler secret put SESSION_SECRET
    # Paste: {"v1":"<old>","v2":"<new>"}
    ```
 
@@ -239,7 +246,7 @@ Procedure:
    can still be alive), drop `v1` from the secret:
 
    ```bash
-   wrangler secret put SESSION_SECRET --config packages/worker/wrangler.toml
+   pnpm -F @ravenscope/worker exec wrangler secret put SESSION_SECRET
    # Paste: {"v2":"<new>"}
    ```
 
