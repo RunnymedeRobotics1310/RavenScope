@@ -40,7 +40,11 @@ export async function buildTree(env: Env, sessionDbId: string): Promise<KeyTreeR
         malformed++
         continue
       }
-      if (entry.entryType !== "nt_update") continue
+      // RavenLink's uploader emits `entryType: "data"` for NT data entries
+      // (matching RavenBrain's TelemetryApi semantics). Non-data entries
+      // (match_start, match_end, session_end) are skipped — they carry no
+      // NT key/type.
+      if (entry.entryType !== "data") continue
       if (!entry.ntKey || entry.ntKey === "/" || !entry.ntType) {
         malformed++
         continue

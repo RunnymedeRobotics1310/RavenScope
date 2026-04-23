@@ -71,9 +71,11 @@ async function wipeR2() {
 }
 
 function makeEntry(overrides: Partial<TelemetryEntryRequest> = {}): TelemetryEntryRequest {
+  // entryType: "data" is the canonical wire value — matches RavenLink's
+  // uploader and RavenBrain's TelemetryApi.
   return {
     ts: new Date().toISOString(),
-    entryType: "nt_update",
+    entryType: "data",
     ntKey: "/SmartDashboard/Test",
     ntType: "double",
     ntValue: "42",

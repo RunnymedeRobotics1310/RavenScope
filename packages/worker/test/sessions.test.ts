@@ -124,7 +124,9 @@ function entry(
   ntType: string,
   ts = new Date().toISOString(),
 ): TelemetryEntryRequest {
-  return { ts, entryType: "nt_update", ntKey, ntType, ntValue: "1" }
+  // entryType: "data" matches RavenLink's uploader and RavenBrain's
+  // TelemetryApi — it's the canonical wire value for NT data entries.
+  return { ts, entryType: "data", ntKey, ntType, ntValue: "1" }
 }
 
 beforeAll(() => {
@@ -326,7 +328,15 @@ describe("GET /api/sessions/:id/tree", () => {
     const jsonl = [
       JSON.stringify(entry("/Foo", "double")),
       "{ not valid json",
-      JSON.stringify({ ts: new Date().toISOString(), entryType: "nt_update", ntKey: "/" }),
+      // Empty-key data entry: tree-builder should count it as malformed,
+      // not a topic. Uses the canonical "data" entryType.
+      JSON.stringify({
+        ts: new Date().toISOString(),
+        entryType: "data",
+        ntKey: "/",
+        ntType: "double",
+        ntValue: "0",
+      }),
     ].join("\n")
     const key = `sessions/${id}/batch-0001.jsonl`
     await env.BLOBS.put(key, new TextEncoder().encode(jsonl))

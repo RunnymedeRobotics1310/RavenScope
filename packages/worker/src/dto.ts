@@ -61,7 +61,13 @@ export interface CreateSessionRequest {
 
 export interface TelemetryEntryRequest {
   ts: string
-  entryType: string
+  /**
+   * "data" for NT value updates (ntKey/ntType/ntValue populated).
+   * "match_start" / "match_end" / "session_end" for markers (fmsRaw
+   * populated on match_start). Matches RavenLink's uploader and
+   * RavenBrain's TelemetryApi wire contract verbatim.
+   */
+  entryType: "data" | "match_start" | "match_end" | "session_end" | string
   ntKey?: string | null
   ntType?: string | null
   ntValue?: string | null
