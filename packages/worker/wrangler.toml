@@ -7,9 +7,12 @@ compatibility_flags = ["nodejs_compat"]
 directory = "../web/dist"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
-# Note: `/api/*` routes return Worker 404s rather than falling back to index.html because
-# Hono handles them explicitly. If a future bundle emits files at `/api/*` paths, add
-# `run_worker_first = ["/api/*"]` (format varies by wrangler version — verify schema).
+# Route /api/* to the Worker before consulting static assets. Without this,
+# the SPA fallback serves index.html for any unmatched path INCLUDING
+# /api/auth/verify, and the Hono handler never runs. Observable as a 200
+# with Content-Type: text/html on API endpoints (and no Set-Cookie on
+# verify, breaking the magic-link flow).
+run_worker_first = ["/api/*"]
 
 [[durable_objects.bindings]]
 name = "SESSION_INGEST_DO"
