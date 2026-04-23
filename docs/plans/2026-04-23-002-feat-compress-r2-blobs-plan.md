@@ -44,8 +44,11 @@ committed `sample-session.jsonl` fixture: **~30 KB gzipped**, ~9.7× ratio.
 - **R1.** Every object RavenScope writes to R2 is stored gzipped.
 - **R2.** Every read path transparently decompresses, so callers (tree
   builder, wpilog converter, downloaders) don't need to know.
-- **R3.** WPILog downloads delivered to the browser are saved
-  uncompressed so AdvantageScope opens them directly.
+- **R3.** WPILog downloads delivered to the browser are **plain
+  uncompressed .wpilog bytes** — the Worker decompresses on the fly
+  before sending. No `Content-Encoding: gzip` header on the response.
+  AdvantageScope, `curl -O`, and wget all get the same standard WPILog
+  regardless of client behaviour around content-encoded downloads.
 - **R4.** Byte-for-byte fixtures + golden-file tests still pass — the
   on-disk R2 bytes change, but the observable outputs (tree nodes,
   downloaded `.wpilog` bytes, session detail data) do not.
@@ -101,12 +104,13 @@ committed `sample-session.jsonl` fixture: **~30 KB gzipped**, ~9.7× ratio.
 
 ## Key Technical Decisions
 
-- **Store with `Content-Encoding: gzip` in R2 metadata.** When we set
-  `httpMetadata.contentEncoding = "gzip"`, the wrangler `env.BLOBS.get`
-  can return an already-decompressed ReadableStream when the client
-  asks for decompression. More importantly, passing through to HTTP
-  downloads lets the browser decompress automatically — the user ends
-  up saving a standard `.wpilog`, not `.wpilog.gz`.
+- **Store with `contentEncoding: "gzip"` in R2's httpMetadata.** This
+  labels the object for the read path — every reader knows whether
+  it needs to pipe through DecompressionStream. The metadata is
+  informational, not a Worker-runtime content-negotiation trigger,
+  so the body we receive from `env.BLOBS.get` is always the raw
+  stored bytes (gzipped, in the new world). Decompression is our
+  responsibility.
 - **Decompress at the wrapper boundary for internal reads.** Tree
   builder + wpilog converter process JSONL line-by-line, so they want
   decompressed bytes. Wrap `env.BLOBS.get()` in a helper that checks
@@ -118,11 +122,15 @@ committed `sample-session.jsonl` fixture: **~30 KB gzipped**, ~9.7× ratio.
   that, any remaining uncompressed objects get rewritten on next
   access (opportunistic migration), or we add a one-shot re-gzip
   script if there are many.
-- **WPILog downloads ship with `Content-Encoding: gzip` set on the
-  response.** The browser decompresses and saves a plain `.wpilog`.
-  This avoids a redundant decompress-then-compress round-trip in the
-  Worker. Content-Length is omitted (unknown post-decompress) and the
-  response is chunked-transferred.
+- **WPILog downloads decompress in the Worker, serve plain
+  uncompressed bytes.** Pipe the stored gzipped body through
+  `DecompressionStream("gzip")` and send that as the response body.
+  No `Content-Encoding` header. Rationale: uniform behaviour across
+  clients (browsers, `curl`, `wget`, AdvantageScope-via-URL when that
+  eventually lands), no reliance on user-agent gzip decoding, no
+  surprise `.wpilog.gz` filenames on certain browsers. CPU cost of
+  streaming decompression on a ~1 MB compressed payload is single-
+  digit milliseconds — well inside Worker limits.
 - **Multipart writer compresses during the upload, not after.** The
   `R2MultipartWpilogWriter` already accepts streaming writes; we tee
   the stream through `CompressionStream("gzip")` and upload the
@@ -214,42 +222,53 @@ the full Unit 7 golden-file test still passes (byte-compat preserved).
 
 ---
 
-- [ ] U2. **WPILog download: serve with Content-Encoding: gzip**
+- [ ] U2. **WPILog download: decompress in Worker, serve plain bytes**
 
-**Goal:** The `GET /api/sessions/:id/wpilog` response sends the stored
-gzipped bytes as-is, setting `Content-Encoding: gzip` so the browser
-decompresses transparently on save. AdvantageScope opens the resulting
-file as a standard uncompressed WPILog.
+**Goal:** The `GET /api/sessions/:id/wpilog` response sends plain
+uncompressed WPILog bytes regardless of how the object is stored.
+The Worker pipes the gzipped R2 body through `DecompressionStream("gzip")`
+into the response. No `Content-Encoding` header — clients receive a
+standard WPILog file and save it without any decoding quirks.
 
 **Requirements:** R3.
 
 **Dependencies:** U1.
 
 **Files:**
-- Modify: `packages/worker/src/routes/wpilog.ts` — stream the gzipped
-  R2 body with `Content-Encoding: gzip` header
+- Modify: `packages/worker/src/routes/wpilog.ts` — pipe the R2 body
+  through DecompressionStream when the object is gzipped
 - Test: `packages/worker/test/wpilog-download-compression.test.ts`
 
 **Approach:**
-- `streamWpilogResponse()` gains a `contentEncoding` parameter. When
-  the R2 object was stored gzipped (expected in the new world), set
-  `Content-Encoding: gzip` on the outgoing Response and pipe the body
-  straight through.
-- Content-Length: omit. Chunked transfer is fine for downloads.
-- Content-Disposition: unchanged — `attachment; filename="<id>.wpilog"`.
-  The browser saves with the right filename and decompresses inline.
+- Fetch the R2 object. Read its `httpMetadata.contentEncoding`.
+- If `"gzip"`: pipe `obj.body` through `new DecompressionStream("gzip")`
+  and hand the resulting stream to the Response constructor.
+- If absent / `"identity"` (legacy object): pipe the raw body
+  through unchanged.
+- Response headers:
+  - `Content-Type: application/octet-stream`
+  - `Content-Disposition: attachment; filename="<sessionId>.wpilog"`
+  - **No** `Content-Encoding`
+  - Content-Length omitted (streaming decompression — final size
+    isn't known up front). Chunked transfer works for all download
+    clients.
 
 **Test scenarios:**
-- Happy path — download via `fetch()` in a test: response has
-  `Content-Encoding: gzip`; `await res.arrayBuffer()` automatically
-  decompresses (undici behaviour); bytes match the in-worker
-  `convertToBytes` golden output.
-- Error path — R2 object missing: 404 rather than a gzip-decode error.
-- Integration — full e2e: ingest → download → bytes byte-equal to the
-  golden WPILog fixture from Unit 7.
+- Happy path — download via `fetch()`: response has NO `Content-Encoding`
+  header; `await res.arrayBuffer()` returns plain WPILog bytes
+  byte-equal to the convertToBytes golden output.
+- Legacy path — pre-compression (uncompressed) R2 object: same
+  downloaded bytes.
+- Error path — R2 object missing: 404 rather than a decompression
+  error.
+- Integration — full e2e: ingest → download → bytes byte-equal to
+  the golden WPILog fixture from Unit 7 regardless of storage format.
+- Edge case — truncated gzip stream: surfaces a readable error, not
+  silent data corruption.
 
 **Verification:** download response passes AdvantageScope's file open
-(manual check); automated test asserts round-trip byte equality.
+(manual check); automated test asserts round-trip byte equality AND
+the absence of `Content-Encoding` in the response.
 
 ---
 
@@ -269,9 +288,11 @@ file as a standard uncompressed WPILog.
 - **API surface parity:** Wire contracts unchanged. RavenLink's POST
   bodies unchanged. Download response adds one header; browsers
   transparently handle it.
-- **Quota accounting (plan 2026-04-23-001):** The bytes-uploaded
-  charge uses the raw request-body length (pre-compress). Compression
-  only reduces the R2 **storage** footprint, not the ingest charge.
+- **Quota accounting (plan 2026-04-23-001):** The bytes-stored charge
+  is measured AFTER compression at the storage-wrapper layer. The
+  1 GiB/day cap therefore tracks actual R2 storage growth — the true
+  bill-risk surface. In wire-byte terms the cap is ~10× more generous
+  than it looks on paper given typical compression ratios.
 
 ## Risks & Dependencies
 
@@ -280,7 +301,7 @@ file as a standard uncompressed WPILog.
 | Byte-compat golden test in Unit 7 breaks if compression accidentally mutates the payload | Characterization-first in U1: the round-trip test runs before the write path is wired in. |
 | Legacy uncompressed objects become unreadable | Read path tolerates both formats during migration window; auto-detect via stored `contentEncoding` metadata. |
 | CompressionStream adds Worker CPU time and blows the 10ms/request budget on free tier | gzip level 6 on a 100 KB JSONL batch is ~2–3 ms on Workers. Well inside 10 ms. Measured during Unit 1. |
-| Browser download with `Content-Encoding: gzip` saves the file with `.gz` extension on some browsers | Content-Disposition explicitly sets `filename="<id>.wpilog"` — tested on Chrome/Safari/Firefox. If an edge case emerges, add a fallback mode that decompresses in the Worker. |
+| Worker CPU budget for per-download decompression | Streaming gzip decompression on a ~1-2 MB compressed payload is ~3-5 ms on Workers. Well inside the 10 ms free-tier CPU budget. Measured during Unit 2. |
 
 ## Documentation / Operational Notes
 

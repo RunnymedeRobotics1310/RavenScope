@@ -33,8 +33,12 @@ orders of magnitude below the proposed caps.
 
 ## Requirements Trace
 
-- **R1.** Track total bytes uploaded per UTC day across every `/data`
-  request body and every object written to R2.
+- **R1.** Track **compressed bytes stored to R2** per UTC day — this is
+  the actual storage-cost driver on Cloudflare's bill. The metric is
+  measured at the storage-wrapper layer, AFTER gzip compression (see
+  companion plan `2026-04-23-002-feat-compress-r2-blobs-plan`). 1 GiB/day
+  of compressed bytes is ~10 GiB/day of real JSONL given empirical ~10×
+  ratios.
 - **R2.** Track total R2 Class A ops (PUTs, multipart init/part/complete,
   LISTs) per UTC day.
 - **R3.** Track total R2 Class B ops (GETs, HEADs) per UTC day.
@@ -139,11 +143,12 @@ orders of magnitude below the proposed caps.
   cap is a safety rail, not an accounting ledger. A small number of
   phantom charges is cheaper than a race between refund and concurrent
   writes.
-- **Bytes counter charges request Content-Length on ingest, not
-  post-encoding R2 object size.** Content-Length is what hit the
-  network and what the operator cares about for bill defense. R2
-  object size is almost identical anyway (JSONL batches are written
-  ~1:1 from the request body).
+- **Bytes counter charges compressed R2-object size, not request
+  Content-Length.** The real bill risk is R2 storage ($/GB-month), not
+  wire bytes. Measuring at the storage wrapper means we count what
+  actually hit the disk. Consequence: a single-digit-MB compressed
+  object can represent tens of MB of raw telemetry — the 1 GiB cap is
+  ~10× more generous in wire-byte terms than it looks on paper.
 - **One alert email per metric per day.** The counter carries
   `alerted_{bytes,class_a,class_b}` columns that flip from 0 → 1 on the
   first breach. Subsequent breaches log the audit event but don't send
@@ -159,8 +164,11 @@ orders of magnitude below the proposed caps.
 
 - Per-workspace or global? → Global, because the Cloudflare cost meter
   is per-account.
-- Cap values? → 1 GiB bytes / 5,000 Class A ops / 50,000 Class B ops,
-  per UTC day. Confirmed by the operator on 2026-04-23.
+- Cap values? → 1 GiB compressed bytes / 5,000 Class A ops / 50,000
+  Class B ops, per UTC day. Confirmed by the operator on 2026-04-23.
+- "Bytes" means wire bytes or stored bytes? → Stored (compressed) —
+  that's what the R2 storage bill is calculated on. Confirmed by the
+  operator on 2026-04-23.
 - How to communicate cap breach to clients? → HTTP 429 + `Retry-After`
   in seconds until UTC midnight. RavenLink's uploader already backs off
   on 429, so no upstream change needed.
@@ -297,12 +305,18 @@ into an HTTP 429 with `Retry-After`.
 - Test: `packages/worker/test/quota-enforcement.test.ts`
 
 **Approach:**
-- Counter charges:
-  - `putBatchJsonl(bytes)` → `chargeQuota({bytes: bytes.length, classA: 1})`
-  - `env.BLOBS.get(...)` via `streamSessionBatches` → `chargeQuota({classB: 1})` per object fetched
+- Counter charges (measured at the storage wrapper layer, after
+  compression where applicable):
+  - `putBatchJsonl(...)` → `chargeQuota({bytes: compressed.length,
+    classA: 1})` — the bytes charge reflects what actually got PUT.
+  - `env.BLOBS.get(...)` via `streamSessionBatches` → `chargeQuota(
+    {classB: 1})` per object fetched (no bytes charge — reads don't
+    grow storage)
   - `env.BLOBS.list(...)` → `chargeQuota({classA: 1})`
   - `env.BLOBS.delete(...)` → `chargeQuota({classA: 1})`
-  - `R2MultipartWpilogWriter.init/uploadPart/complete` → 1 Class A per call
+  - `R2MultipartWpilogWriter.init` → 1 Class A; each `uploadPart`
+    → 1 Class A + bytes = part-length (post-compress); `complete`
+    → 1 Class A
 - Ingest route behaviour on `ok: false`:
   - Return 429 with `Retry-After: <seconds>` header.
   - Do NOT write to R2 (the helper already pre-charged, but the R2 PUT
