@@ -14,3 +14,6 @@ coverage/
 vite.config.ts.timestamp-*.mjs
 vite.config.js.timestamp-*.mjs
 package-lock.json
+
+# setup.sh backs up wrangler.toml on first successful run
+wrangler.toml.bak
