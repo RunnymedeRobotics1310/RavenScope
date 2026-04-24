@@ -19,6 +19,10 @@ export interface EmailConfig {
 const RESEND_URL = "https://api.resend.com/emails"
 const MAX_ATTEMPTS = 3
 const BASE_BACKOFF_MS = 200
+/** Upper bound per fetch attempt. Resend's p99 is ~1-2s; 5s absorbs slow
+ *  starts while keeping a hung connection from burning the whole
+ *  `ctx.waitUntil` budget (Cloudflare caps subrequest time). */
+const FETCH_TIMEOUT_MS = 5000
 
 export async function sendMagicLink(
   config: EmailConfig,
@@ -34,35 +38,7 @@ export async function sendMagicLink(
       `${link}\n\n` +
       `If you didn't request this, you can safely ignore this email.`,
   })
-
-  let lastError = "unknown"
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    try {
-      const res = await fetch(RESEND_URL, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${config.apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body,
-      })
-      if (res.ok) return { ok: true }
-
-      // 4xx is not retryable (bad API key, bad from address, etc.).
-      if (res.status >= 400 && res.status < 500) {
-        return { ok: false, error: `resend-${res.status}` }
-      }
-      lastError = `resend-${res.status}`
-    } catch (err) {
-      lastError = err instanceof Error ? `network-${err.name}` : "network-unknown"
-    }
-
-    // Exponential backoff: 200ms, 400ms.
-    if (attempt < MAX_ATTEMPTS - 1) {
-      await sleep(BASE_BACKOFF_MS * 2 ** attempt)
-    }
-  }
-  return { ok: false, error: lastError }
+  return postToResend(config, body)
 }
 
 /**
@@ -109,9 +85,26 @@ export async function sendOperatorAlert(
     subject,
     text,
   })
+  return postToResend(config, body)
+}
 
+/**
+ * Shared Resend POST with 5s per-attempt timeout, 3-attempt exponential
+ * backoff, and 0-30% jitter. Jitter prevents concurrent isolates from
+ * retrying in lockstep during a Resend brownout (the deterministic
+ * 200/400ms cadence would otherwise compound outbound load).
+ *
+ * 4xx → terminal (bad API key, unverified sender, malformed body).
+ * 5xx / network / abort → retryable.
+ */
+async function postToResend(
+  config: EmailConfig,
+  body: string,
+): Promise<SendMagicLinkResult> {
   let lastError = "unknown"
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
     try {
       const res = await fetch(RESEND_URL, {
         method: "POST",
@@ -120,6 +113,7 @@ export async function sendOperatorAlert(
           "Content-Type": "application/json",
         },
         body,
+        signal: controller.signal,
       })
       if (res.ok) return { ok: true }
       if (res.status >= 400 && res.status < 500) {
@@ -128,9 +122,13 @@ export async function sendOperatorAlert(
       lastError = `resend-${res.status}`
     } catch (err) {
       lastError = err instanceof Error ? `network-${err.name}` : "network-unknown"
+    } finally {
+      clearTimeout(timer)
     }
     if (attempt < MAX_ATTEMPTS - 1) {
-      await sleep(BASE_BACKOFF_MS * 2 ** attempt)
+      const base = BASE_BACKOFF_MS * 2 ** attempt
+      const jitter = Math.floor(Math.random() * base * 0.3)
+      await sleep(base + jitter)
     }
   }
   return { ok: false, error: lastError }

@@ -2,8 +2,8 @@ import { eq, sql } from "drizzle-orm"
 import { createDb, type Db } from "../db/client"
 import { sessionBatches, telemetrySessions } from "../db/schema"
 import type { Env } from "../env"
-import { QuotaExceededError } from "../quota/daily-quota"
-import { putBatchJsonl } from "../storage/r2"
+import { chargeOrThrow, QuotaExceededError } from "../quota/daily-quota"
+import { encodeBatchJsonl, putBatchJsonlBytes } from "../storage/r2"
 
 /**
  * Per-session ingest coordinator (one DO instance per telemetry_sessions.id).
@@ -38,6 +38,13 @@ interface IngestCompleteRequest {
 
 export class SessionIngestDO implements DurableObject {
   private seq: number | null = null
+  /**
+   * Highest seq we've ever debited the daily quota for. Persisted
+   * before the R2 PUT so that a retry after a D1 batch failure (or a DO
+   * eviction between charge and success) doesn't double-charge the
+   * counter for the same logical batch. See review finding F4.
+   */
+  private chargedSeq = 0
   private sessionDbId: string | null = null
 
   constructor(
@@ -46,8 +53,10 @@ export class SessionIngestDO implements DurableObject {
   ) {
     state.blockConcurrencyWhile(async () => {
       const storedSeq = await state.storage.get<number>("seq")
+      const storedChargedSeq = await state.storage.get<number>("chargedSeq")
       const storedId = await state.storage.get<string>("sessionDbId")
       if (typeof storedSeq === "number") this.seq = storedSeq
+      if (typeof storedChargedSeq === "number") this.chargedSeq = storedChargedSeq
       if (typeof storedId === "string") this.sessionDbId = storedId
     })
   }
@@ -73,12 +82,10 @@ export class SessionIngestDO implements DurableObject {
       return Response.json({ count: 0 } satisfies { count: number })
     }
 
-    // Critical section: seq allocation + R2 write + D1 batch + seq advance.
-    // Wrapped in blockConcurrencyWhile so two concurrent /data calls to the
-    // same session (same DO) can't both compute the same seq and race on the
-    // session_batches UNIQUE constraint. Cloudflare's default input gate
-    // preserves state across I/O yields but does not serialize full
-    // critical sections — blockConcurrencyWhile does.
+    // Critical section: seq allocation + quota charge + R2 write + D1 batch
+    // + seq advance. Wrapped in blockConcurrencyWhile so two concurrent
+    // /data calls to the same session (same DO) can't both compute the same
+    // seq and race on the session_batches UNIQUE constraint.
     return this.state.blockConcurrencyWhile(async () => {
       await this.bindSessionId(sessionDbId)
 
@@ -86,32 +93,42 @@ export class SessionIngestDO implements DurableObject {
       await this.hydrateSeq(db, sessionDbId)
       const nextSeq = (this.seq ?? 0) + 1
 
-      // 1. R2 write first. On failure, no seq advance, no D1 mutation.
-      let r2Result: { key: string; rawByteLength: number; storedByteLength: number }
-      try {
-        r2Result = await putBatchJsonl(this.env, sessionDbId, nextSeq, entries)
-      } catch (err) {
-        if (err instanceof QuotaExceededError) {
-          // Surface the 429 through the DO→Worker fetch boundary with
-          // a status code the Worker route can pass through as-is. The
-          // firstBreach header tells the Worker to fire the operator
-          // alert + audit log via its own ctx.waitUntil (keeps Resend
-          // off the critical path of the 429 response).
-          const headers: Record<string, string> = {
-            "Retry-After": String(err.retryAfter),
-          }
-          if (err.firstBreach) {
-            headers["X-Quota-First-Breach"] = err.metric
-          }
-          return new Response(`quota_cap_hit: ${err.metric}`, {
-            status: 429,
-            headers,
+      // 1. Encode the batch locally (no R2 yet) so we know the exact byte
+      //    count to charge.
+      const encoded = await encodeBatchJsonl(sessionDbId, nextSeq, entries)
+
+      // 2. Charge quota, but only if we haven't already charged for this
+      //    seq on a prior attempt. `chargedSeq` is persisted BEFORE the R2
+      //    PUT so a D1 failure (or DO eviction) that forces a retry sees
+      //    chargedSeq == nextSeq and skips the second charge. Without this
+      //    dedup, a D1-flappy window would double-charge the daily counter
+      //    per retry (review finding F4).
+      if (nextSeq > this.chargedSeq) {
+        try {
+          await chargeOrThrow(this.env, {
+            bytes: encoded.storedByteLength,
+            classA: 1,
           })
+        } catch (err) {
+          if (err instanceof QuotaExceededError) {
+            return cappedDoResponse(err)
+          }
+          throw err
         }
+        this.chargedSeq = nextSeq
+        await this.state.storage.put("chargedSeq", nextSeq)
+      }
+
+      // 3. R2 PUT. Uncharged at this layer — the charge already committed.
+      //    On failure, chargedSeq stays at nextSeq so the retry skips the
+      //    charge and deterministically overwrites any orphan object.
+      try {
+        await putBatchJsonlBytes(this.env, encoded.key, encoded.compressed)
+      } catch (err) {
         return new Response(`r2_write_failed: ${String(err)}`, { status: 503 })
       }
 
-      // 2. D1 atomic group: insert batch row + bump uploaded_count + touch
+      // 4. D1 atomic group: insert batch row + bump uploaded_count + touch
       //    last_batch_at + invalidate wpilog cache. db.batch ensures all-or-
       //    nothing at the D1 layer.
       try {
@@ -122,9 +139,9 @@ export class SessionIngestDO implements DurableObject {
             // byte_length stays as the raw JSONL length (users reading this
             // column see "N bytes of real telemetry"). storedByteLength is
             // used separately by the quota system (plan 2026-04-23-001).
-            byteLength: r2Result.rawByteLength,
+            byteLength: encoded.rawByteLength,
             entryCount: entries.length,
-            r2Key: r2Result.key,
+            r2Key: encoded.key,
           }),
           db
             .update(telemetrySessions)
@@ -138,11 +155,12 @@ export class SessionIngestDO implements DurableObject {
         ])
       } catch (err) {
         // D1 failed after R2 succeeded. Leave seq alone so the retry reuses
-        // the same number and overwrites the orphan R2 object.
+        // the same number and overwrites the orphan R2 object. chargedSeq
+        // is already persisted at nextSeq → retry won't double-charge.
         return new Response(`d1_batch_failed: ${String(err)}`, { status: 503 })
       }
 
-      // 3. Only now advance seq in memory + storage.
+      // 5. Only now advance seq in memory + storage.
       this.seq = nextSeq
       await this.state.storage.put("seq", nextSeq)
 
@@ -205,6 +223,29 @@ export class SessionIngestDO implements DurableObject {
     this.seq = row?.maxSeq ?? 0
     await this.state.storage.put("seq", this.seq)
   }
+}
+
+/**
+ * DO-side 429 builder. Emits:
+ *  - Retry-After (seconds-until-UTC-midnight, computed at breach time)
+ *  - X-Quota-First-Breach (only on the 0→1 latch flip) so the Worker
+ *    fires the operator alert via ctx.waitUntil
+ *  - X-Quota-Breach-Date (always, when firstBreach) so the Worker's
+ *    waitUntil reads the right D1 row even if it runs after UTC
+ *    midnight (review finding F9).
+ */
+function cappedDoResponse(err: QuotaExceededError): Response {
+  const headers: Record<string, string> = {
+    "Retry-After": String(err.retryAfter),
+  }
+  if (err.firstBreach) {
+    headers["X-Quota-First-Breach"] = err.metric
+    headers["X-Quota-Breach-Date"] = err.row.date
+  }
+  return new Response(`quota_cap_hit: ${err.metric}`, {
+    status: 429,
+    headers,
+  })
 }
 
 function serialize(row: typeof telemetrySessions.$inferSelect): Record<string, unknown> {

@@ -73,13 +73,57 @@ export function readPlainBlobStream(obj: R2ObjectBody): ReadableStream<Uint8Arra
 /* --- JSONL batch write (per /data call) ---------------------------- */
 
 /**
- * Writes a batch of JSON entries as a gzipped JSONL blob at the
- * canonical key. Returns:
- *   - `key`: R2 key
- *   - `rawByteLength`: raw JSONL length (used as session_batches.byte_length
- *     so that column keeps reading as "size of real data in this batch").
- *   - `storedByteLength`: compressed size written to R2 (used by the
- *     daily-quota `bytes` metric in plan 2026-04-23-001).
+ * Encodes a batch of JSON entries as gzipped JSONL. Returns the key,
+ * raw + compressed byte lengths, and the compressed bytes. Does NOT
+ * touch R2 — callers PUT via `putBatchJsonlBytes` so the charge can be
+ * deduped against a persisted `chargedSeq` marker (DO retry path).
+ */
+export async function encodeBatchJsonl(
+  sessionDbId: string,
+  seq: number,
+  entries: unknown[],
+): Promise<{
+  key: string
+  rawByteLength: number
+  storedByteLength: number
+  compressed: Uint8Array
+}> {
+  // Trailing newline is load-bearing: when streamSessionBatches
+  // concatenates successive batches for the wpilog converter, the newline
+  // is what separates the last line of batch-N from the first of batch-N+1.
+  const body = entries.map((e) => JSON.stringify(e)).join("\n") + "\n"
+  const rawBytes = new TextEncoder().encode(body)
+  const compressed = await gzipEncode(rawBytes)
+  return {
+    key: batchKey(sessionDbId, seq),
+    rawByteLength: rawBytes.length,
+    storedByteLength: compressed.length,
+    compressed,
+  }
+}
+
+/**
+ * Puts pre-gzipped batch bytes to R2 at the given key. Uncharged —
+ * caller is responsible for charging quota (and handling retries so
+ * the same seq doesn't double-charge).
+ */
+export async function putBatchJsonlBytes(
+  env: Env,
+  key: string,
+  compressed: Uint8Array,
+): Promise<void> {
+  await env.BLOBS.put(key, compressed, {
+    httpMetadata: {
+      contentType: "application/x-ndjson",
+      contentEncoding: "gzip",
+    },
+  })
+}
+
+/**
+ * @deprecated Legacy one-shot: encode + charge + PUT. Kept only for
+ * out-of-DO callers (none today). New code should use
+ * `encodeBatchJsonl` + charge-with-dedup + `putBatchJsonlBytes`.
  */
 export async function putBatchJsonl(
   env: Env,
@@ -87,27 +131,44 @@ export async function putBatchJsonl(
   seq: number,
   entries: unknown[],
 ): Promise<{ key: string; rawByteLength: number; storedByteLength: number }> {
-  // Trailing newline is load-bearing: when streamSessionBatches
-  // concatenates successive batches for the wpilog converter, the newline
-  // is what separates the last line of batch-N from the first of batch-N+1.
-  const body = entries.map((e) => JSON.stringify(e)).join("\n") + "\n"
-  const rawBytes = new TextEncoder().encode(body)
-  const compressed = await gzipEncode(rawBytes)
-  // Charge compressed bytes + 1 Class A op BEFORE the PUT. Throws
-  // QuotaExceededError on cap hit — caller returns 429.
-  await chargeOrThrow(env, { bytes: compressed.length, classA: 1 })
-  const key = batchKey(sessionDbId, seq)
-  await env.BLOBS.put(key, compressed, {
+  const encoded = await encodeBatchJsonl(sessionDbId, seq, entries)
+  await chargeOrThrow(env, { bytes: encoded.storedByteLength, classA: 1 })
+  await env.BLOBS.put(encoded.key, encoded.compressed, {
     httpMetadata: {
       contentType: "application/x-ndjson",
       contentEncoding: "gzip",
     },
   })
-  return { key, rawByteLength: rawBytes.length, storedByteLength: compressed.length }
+  return {
+    key: encoded.key,
+    rawByteLength: encoded.rawByteLength,
+    storedByteLength: encoded.storedByteLength,
+  }
 }
 
-/** Deletes a single object. Used to clean up orphans on retry paths. */
-export async function deleteObject(env: Env, key: string): Promise<void> {
+/* --- generic charged wrappers ------------------------------------- */
+
+/**
+ * Callers outside this module use these wrappers instead of touching
+ * `env.BLOBS.{list,get,delete}` directly, so every R2 op routes through
+ * the daily-quota counter. Direct `env.BLOBS` calls in routes or
+ * tree-builder are a quota bypass — see review finding F1 / 2026-04-24.
+ */
+export async function listBlobs(
+  env: Env,
+  options: R2ListOptions,
+): Promise<R2Objects> {
+  await chargeOrThrow(env, { classA: 1 })
+  return env.BLOBS.list(options)
+}
+
+export async function getBlob(env: Env, key: string): Promise<R2ObjectBody | null> {
+  await chargeOrThrow(env, { classB: 1 })
+  return env.BLOBS.get(key)
+}
+
+export async function deleteBlob(env: Env, key: string): Promise<void> {
+  await chargeOrThrow(env, { classA: 1 })
   await env.BLOBS.delete(key)
 }
 
@@ -130,9 +191,13 @@ export async function* streamSessionBatches(
     .map((o) => o.key)
     .filter((k) => k.endsWith(".jsonl"))
     .sort()
+  // Batch-charge all Class B ops up front rather than per-iteration; a
+  // 20 MB wpilog regen with 20 batches would otherwise serialize 20
+  // extra D1 round-trips in front of the R2 GETs (review finding F7).
+  if (keys.length > 0) {
+    await chargeOrThrow(env, { classB: keys.length })
+  }
   for (const key of keys) {
-    // Each GET: 1 Class B op.
-    await chargeOrThrow(env, { classB: 1 })
     const obj = await env.BLOBS.get(key)
     if (!obj) continue
     const stream = readPlainBlobStream(obj)
