@@ -113,6 +113,11 @@ advantagescopeRoutes.get("/:id/*", async (c) => {
   const prefix = `/v/${c.req.param("id")}/`
   if (!url.pathname.startsWith(prefix)) return c.json({ error: "not_found" }, 404)
   const subPath = url.pathname.slice(prefix.length)
+  // Empty subPath = iframe root served with a trailing slash (the
+  // iframe in SessionView uses `/v/:id/?log=...`, not `/v/:id`).
+  // Serve index.html directly -- without allowHtml the sanity check
+  // would reject the HTML response as SPA fallback.
+  if (subPath === "") return proxyStatic(c, "index.html", { allowHtml: true })
   return proxyStatic(c, subPath)
 })
 

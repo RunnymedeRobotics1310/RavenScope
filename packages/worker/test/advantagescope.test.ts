@@ -266,6 +266,26 @@ describe("auth matrix on /v/:id/*", () => {
     expect(body.error).toBe("not_found")
   })
 
+  it("iframe root with trailing slash (/v/:id/) is authorized (404 when not owner, not the SPA HTML)", async () => {
+    // The SessionView iframe src is `/v/${id}/?log=...` -- the trailing
+    // slash variant must flow through the same auth gate as /v/:id.
+    // Before the catch-all fix, /v/:id/ with empty sub-path served the
+    // SPA's index.html (with text/html content-type) and got rejected
+    // as 404 instead of serving AS Lite's index.html.
+    const a = await signInAs("a-root@test.local")
+    const b = await signInAs("b-root@test.local")
+    const bearerB = await createApiKey(b.cookie)
+    const session = await ingestSession(bearerB, "b-root-private", [
+      entry("/A", "double", "1.0", "2026-04-22T18:00:00.100Z"),
+    ])
+    const res = await SELF.fetch(`${BASE}/v/${session.id}/`, {
+      headers: { Cookie: a.cookie },
+    })
+    expect(res.status).toBe(404)
+    const body = (await res.json()) as { error: string }
+    expect(body.error).toBe("not_found")
+  })
+
   it("rejects bearer auth (cookie only)", async () => {
     const a = await signInAs("bearer-rejected@test.local")
     const bearer = await createApiKey(a.cookie)
