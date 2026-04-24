@@ -1,9 +1,35 @@
 diff --git a/src/main/lite/main.ts b/src/main/lite/main.ts
-index def5faf..ee94ceb 100644
+index def5faf..6612a23 100644
 --- a/src/main/lite/main.ts
 +++ b/src/main/lite/main.ts
-@@ -265,6 +265,14 @@ async function initHub() {
-   if (state !== null) sendMessage(hubPort, "restore-state", JSON.parse(state));
+@@ -261,10 +261,42 @@ async function initHub() {
+   sendMessage(hubPort, "set-assets", await assetsPromise);
+   let typeMemory = localStorage.getItem(LocalStorageKeys.TYPE_MEMORY);
+   if (typeMemory !== null) sendMessage(hubPort, "restore-type-memory", JSON.parse(typeMemory));
+-  let state = localStorage.getItem(LocalStorageKeys.STATE);
+-  if (state !== null) sendMessage(hubPort, "restore-state", JSON.parse(state));
++
++  // RavenScope: server-authoritative layout bootstrap. Ask the Worker
++  // for the user's default or last-used HubState; fall back to the
++  // original localStorage path if the fetch fails (network / 5xx), so
++  // a transient outage reverts to AS Lite's own behavior rather than
++  // breaking the viewer. See
++  // docs/plans/2026-04-24-002-feat-shared-viewer-layouts-plan.md U3.
++  let ravenRestoredFromServer = false;
++  try {
++    const res = await fetch("/api/me/viewer-layout", { credentials: "same-origin" });
++    if (res.ok) {
++      const body = (await res.json()) as { state: unknown | null };
++      if (body.state) sendMessage(hubPort, "restore-state", body.state);
++      ravenRestoredFromServer = true;
++    }
++  } catch {
++    /* fall through to localStorage */
++  }
++  if (!ravenRestoredFromServer) {
++    let state = localStorage.getItem(LocalStorageKeys.STATE);
++    if (state !== null) sendMessage(hubPort, "restore-state", JSON.parse(state));
++  }
    sendMessage(hubPort, "show-when-ready");
  
 +  // RavenScope deep-link: if ?log=<name> is present in the URL, auto-
@@ -14,6 +40,132 @@ index def5faf..ee94ceb 100644
 +    sendMessage(hubPort, "open-files", { files: [autoLog], merge: false });
 +  }
 +
++  // RavenScope: install the save-state -> server pipeline and the
++  // parent-frame postMessage responder once the hub port is live.
++  ravenSetupStateSync();
++
    // Add cursor event handlers
    HUB_FRAME.contentWindow?.addEventListener("contextmenu", (event) => {
      event.preventDefault();
+@@ -301,6 +333,13 @@ async function handleHubMessage(message: NamedMessage) {
+ 
+     case "save-state":
+       localStorage.setItem(LocalStorageKeys.STATE, JSON.stringify(message.data));
++      // RavenScope: capture the latest state for the postMessage
++      // responder (so the SPA can "Save current layout" without
++      // needing another round-trip to the hub), and schedule a
++      // debounced PUT to /api/me/viewer-layout/last-used so the user's
++      // current layout survives storage eviction and device switches.
++      ravenLastCapturedState = message.data;
++      ravenScheduleLastUsedPut();
+       break;
+ 
+     case "save-type-memory":
+@@ -1310,3 +1349,107 @@ window.addEventListener("load", () => {
+     }
+   }
+ });
++
++// --------------------------------------------------------------------
++// RavenScope state-sync plumbing.
++//
++// All behavior below is RavenScope-owned and applied as a local patch
++// by `packages/web/scripts/publish-advantagescope-bundle.mjs`. It
++// replaces AS Lite's localStorage-only state persistence with a
++// server-authoritative model: the user's HubState lives in D1 and is
++// bootstrapped on page load, captured back via a debounced PUT on
++// every save-state, and surfaceable to the React chrome via a
++// namespaced postMessage channel.
++//
++// Safety:
++//   - The parent-window postMessage listener rejects any event whose
++//     origin is not the RavenScope origin. The iframe is embedded with
++//     sandbox="allow-scripts allow-same-origin" so same-origin is the
++//     only channel we accept.
++//   - Last-used PUTs are best-effort. Failures are swallowed; the next
++//     save-state retries. A pagehide beacon ensures the final state
++//     reaches the server on navigation.
++// --------------------------------------------------------------------
++let ravenLastCapturedState: unknown = null;
++let ravenPendingPutTimer: ReturnType<typeof setTimeout> | null = null;
++const RAVEN_PUT_DEBOUNCE_MS = 2000;
++const RAVEN_MSG_NAMESPACE = "ravenscope:viewer";
++
++function ravenScheduleLastUsedPut(): void {
++  if (ravenPendingPutTimer !== null) clearTimeout(ravenPendingPutTimer);
++  ravenPendingPutTimer = setTimeout(() => {
++    ravenPendingPutTimer = null;
++    ravenFlushLastUsed(ravenLastCapturedState);
++  }, RAVEN_PUT_DEBOUNCE_MS);
++}
++
++function ravenFlushLastUsed(state: unknown): void {
++  if (state === null || state === undefined) return;
++  fetch("/api/me/viewer-layout/last-used", {
++    method: "PUT",
++    credentials: "same-origin",
++    headers: { "content-type": "application/json" },
++    body: JSON.stringify({ state }),
++    keepalive: true
++  }).catch(() => {
++    /* best-effort; next save-state retries */
++  });
++}
++
++function ravenSetupStateSync(): void {
++  // postMessage bridge between the RavenScope SPA chrome and this
++  // outer AS shell. The SPA uses this to ask for the current state
++  // ("Save current layout" menu) and to push a state for live
++  // application ("Load layout" menu).
++  window.addEventListener("message", (event) => {
++    if (event.origin !== window.location.origin) return;
++    const data = event.data as
++      | { type?: string; kind?: string; reqId?: string; state?: unknown }
++      | null;
++    if (!data || data.type !== RAVEN_MSG_NAMESPACE) return;
++    if (data.kind === "get-state") {
++      const src = event.source as WindowProxy | null;
++      if (src) {
++        src.postMessage(
++          {
++            type: RAVEN_MSG_NAMESPACE,
++            kind: "state-response",
++            reqId: data.reqId,
++            state: ravenLastCapturedState
++          },
++          window.location.origin
++        );
++      }
++      return;
++    }
++    if (data.kind === "apply-state" && data.state !== undefined) {
++      sendMessage(hubPort, "restore-state", data.state);
++      // Capture the freshly-applied state as the new last-used so a
++      // page reload keeps it; scheduled (not immediate) to match the
++      // save-state cadence.
++      ravenLastCapturedState = data.state;
++      ravenScheduleLastUsedPut();
++      return;
++    }
++  });
++
++  // On page hide, flush any pending debounced PUT via sendBeacon so
++  // the final state reaches the server even if the tab is closing.
++  window.addEventListener("pagehide", () => {
++    if (ravenPendingPutTimer !== null) {
++      clearTimeout(ravenPendingPutTimer);
++      ravenPendingPutTimer = null;
++    }
++    if (ravenLastCapturedState === null || ravenLastCapturedState === undefined) return;
++    const blob = new Blob(
++      [JSON.stringify({ state: ravenLastCapturedState })],
++      { type: "application/json" }
++    );
++    try {
++      navigator.sendBeacon("/api/me/viewer-layout/last-used", blob);
++    } catch {
++      /* some browsers reject non-text beacons; fall back to keepalive fetch */
++      ravenFlushLastUsed(ravenLastCapturedState);
++    }
++  });
++}

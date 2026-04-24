@@ -264,6 +264,76 @@ export const workspaceInvites = sqliteTable(
   }),
 )
 
+// Workspace-shared viewer layouts. Any workspace member can create, rename,
+// or delete rows. `state_json` carries the AS Lite HubState payload as
+// JSON text. Unique (workspace_id, name) keeps picker UIs unambiguous;
+// duplicates surface as 409 in the route layer.
+export const workspaceViewerLayouts = sqliteTable(
+  "workspace_viewer_layouts",
+  {
+    id: text("id").primaryKey().$defaultFn(uuid),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    stateJson: text("state_json").notNull(),
+    // Nullable: set null when the creating user is deleted so layouts
+    // outlive churn. Traceability preserved in the column until then.
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => ({
+    workspaceNameUnique: uniqueIndex("workspace_viewer_layouts_workspace_name_unique").on(
+      t.workspaceId,
+      t.name,
+    ),
+    // Powers the picker ordered by most-recently-edited.
+    workspaceUpdatedIdx: index("workspace_viewer_layouts_workspace_updated_idx").on(
+      t.workspaceId,
+      t.updatedAt,
+    ),
+  }),
+)
+
+// Per-user viewer preferences. Composite PK (user, workspace) so the row
+// is unambiguous when a user later belongs to multiple workspaces. The
+// `default_layout_id` FK uses onDelete=set null so deleting a shared
+// layout silently demotes users who had selected it as their default,
+// rather than blocking the delete or cascading to remove their
+// captured last-used blob.
+export const userViewerPreferences = sqliteTable(
+  "user_viewer_preferences",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    defaultLayoutId: text("default_layout_id").references(
+      () => workspaceViewerLayouts.id,
+      { onDelete: "set null" },
+    ),
+    // Nullable: null = user has never interacted with the viewer. TEXT is
+    // used (not BLOB) because HubState is small JSON and easier to
+    // inspect during incident triage.
+    lastUsedStateJson: text("last_used_state_json"),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.userId, t.workspaceId] }),
+  }),
+)
+
 export const schema = {
   users,
   workspaces,
@@ -275,6 +345,8 @@ export const schema = {
   sessionBatches,
   auditLog,
   dailyQuota,
+  workspaceViewerLayouts,
+  userViewerPreferences,
 }
 
 // Reference `sql` at top-level to keep the import stable even when we

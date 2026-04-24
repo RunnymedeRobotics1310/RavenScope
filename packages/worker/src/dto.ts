@@ -237,3 +237,63 @@ export interface KeyTreeResponse {
   malformedLines: number
   generatedAt: string
 }
+
+/* --- Viewer layouts (shared-viewer-layouts plan) ------------------- */
+
+/** Summary of a workspace-shared viewer layout (no state payload). */
+export interface ViewerLayoutSummary {
+  id: string
+  name: string
+  /** Unix ms. */
+  updatedAt: number
+  /** Unix ms. */
+  createdAt: number
+  createdByUserId: string | null
+}
+
+/** Full viewer layout including its HubState payload. `state` is the
+ *  opaque JSON AS Lite sent on save-state — the server does not parse
+ *  or validate it beyond enforcing the 256 KiB size cap. */
+export interface ViewerLayoutDto extends ViewerLayoutSummary {
+  state: unknown
+}
+
+export interface ViewerLayoutsResponse {
+  layouts: ViewerLayoutSummary[]
+}
+
+export interface SaveViewerLayoutRequest {
+  name: string
+  state: unknown
+}
+
+export interface UpdateViewerLayoutRequest {
+  name?: string
+  state?: unknown
+}
+
+/** Which source the viewer used to build the bootstrap payload. */
+export type ViewerLayoutSource = "default" | "last-used" | "none"
+
+/** Returned by GET /api/me/viewer-layout. `state` is null when
+ *  `source === "none"` (fresh user) and otherwise carries the
+ *  corresponding HubState. */
+export interface ViewerLayoutBootstrap {
+  state: unknown | null
+  source: ViewerLayoutSource
+  /** Present when source === "default"; lets the UI show which named
+   *  layout was applied. */
+  defaultLayoutId?: string
+}
+
+export interface UpdateViewerPreferencesRequest {
+  defaultLayoutId: string | null
+}
+
+export interface ViewerPreferencesResponse {
+  defaultLayoutId: string | null
+}
+
+export interface SaveViewerLastUsedRequest {
+  state: unknown
+}

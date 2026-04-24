@@ -73,4 +73,13 @@ describe("SessionView", () => {
     // then encodeURIComponent-s it back to %20.
     expect(iframe.getAttribute("src")).toBe("/v/a%20b/?log=session.wpilog")
   })
+
+  it("renders a Layouts menu trigger (disabled until iframe loads)", () => {
+    renderAt("/sessions/abc-123/view")
+    const trigger = screen.getByRole("button", { name: /layout menu/i })
+    expect(trigger).toBeDefined()
+    // Before the iframe onLoad fires and the /api/me fetch resolves,
+    // the trigger should be disabled (iframeReady=false || !workspaceId).
+    expect((trigger as HTMLButtonElement).disabled).toBe(true)
+  })
 })

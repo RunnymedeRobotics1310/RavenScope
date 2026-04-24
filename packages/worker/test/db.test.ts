@@ -7,9 +7,11 @@ import {
   loginTokens,
   sessionBatches,
   telemetrySessions,
+  userViewerPreferences,
   users,
   workspaceInvites,
   workspaceMembers,
+  workspaceViewerLayouts,
   workspaces,
 } from "../src/db/schema"
 
@@ -49,6 +51,8 @@ beforeEach(async () => {
   await db.delete(loginTokens)
   await db.delete(workspaceInvites)
   await db.delete(workspaceMembers)
+  await db.delete(userViewerPreferences)
+  await db.delete(workspaceViewerLayouts)
   await db.delete(workspaces)
   await db.delete(users)
 })
@@ -385,6 +389,160 @@ describe("schema: workspace members & invites (U1)", () => {
         expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
       }),
       /UNIQUE/i,
+    )
+  })
+})
+
+describe("schema: viewer layouts & preferences (U1)", () => {
+  it("rejects duplicate (workspace_id, name) within a workspace", async () => {
+    const db = createDb(env)
+    const { user, workspace } = await seedUserAndWorkspace("vl1@x.test", "vl ws1")
+    await db.insert(workspaceViewerLayouts).values({
+      workspaceId: workspace.id,
+      name: "Coach view",
+      stateJson: "{}",
+      createdByUserId: user.id,
+    })
+
+    await assertRejectsWithMessage(
+      db.insert(workspaceViewerLayouts).values({
+        workspaceId: workspace.id,
+        name: "Coach view",
+        stateJson: "{}",
+        createdByUserId: user.id,
+      }),
+      /UNIQUE|constraint/i,
+    )
+  })
+
+  it("allows the same layout name under different workspaces", async () => {
+    const db = createDb(env)
+    const a = await seedUserAndWorkspace("vlx@x.test", "vl ws x")
+    const b = await seedUserAndWorkspace("vly@x.test", "vl ws y")
+    await db.insert(workspaceViewerLayouts).values({
+      workspaceId: a.workspace.id,
+      name: "Shared name",
+      stateJson: "{}",
+    })
+    await db.insert(workspaceViewerLayouts).values({
+      workspaceId: b.workspace.id,
+      name: "Shared name",
+      stateJson: "{}",
+    })
+    const rows = await db.select().from(workspaceViewerLayouts)
+    expect(rows).toHaveLength(2)
+  })
+
+  it("deleting a layout sets default_layout_id to NULL on any prefs rows pointing at it", async () => {
+    // R3/R6: another user having your layout as their default should not
+    // block its deletion, and should not cascade-erase their captured
+    // last-used blob. Confirmed by onDelete=set null on the FK.
+    const db = createDb(env)
+    const { user, workspace } = await seedUserAndWorkspace("vl2@x.test", "vl ws2")
+    const [layout] = await db
+      .insert(workspaceViewerLayouts)
+      .values({
+        workspaceId: workspace.id,
+        name: "About to die",
+        stateJson: "{}",
+      })
+      .returning()
+    await db.insert(userViewerPreferences).values({
+      userId: user.id,
+      workspaceId: workspace.id,
+      defaultLayoutId: layout!.id,
+      lastUsedStateJson: '{"last":"used"}',
+    })
+
+    await db.delete(workspaceViewerLayouts).where(eq(workspaceViewerLayouts.id, layout!.id))
+
+    const [prefs] = await db
+      .select()
+      .from(userViewerPreferences)
+      .where(eq(userViewerPreferences.userId, user.id))
+    expect(prefs).toBeDefined()
+    expect(prefs!.defaultLayoutId).toBeNull()
+    // Last-used survives the layout delete — intentional, it's per-user state.
+    expect(prefs!.lastUsedStateJson).toBe('{"last":"used"}')
+  })
+
+  it("deleting a workspace cascades both layouts and prefs", async () => {
+    const db = createDb(env)
+    const { user, workspace } = await seedUserAndWorkspace("vl3@x.test", "vl ws3")
+    await db.insert(workspaceViewerLayouts).values({
+      workspaceId: workspace.id,
+      name: "Layout A",
+      stateJson: "{}",
+    })
+    await db.insert(userViewerPreferences).values({
+      userId: user.id,
+      workspaceId: workspace.id,
+      lastUsedStateJson: "{}",
+    })
+
+    await db.delete(workspaces).where(eq(workspaces.id, workspace.id))
+
+    const layoutsAfter = await db
+      .select()
+      .from(workspaceViewerLayouts)
+      .where(eq(workspaceViewerLayouts.workspaceId, workspace.id))
+    expect(layoutsAfter).toHaveLength(0)
+    const prefsAfter = await db
+      .select()
+      .from(userViewerPreferences)
+      .where(eq(userViewerPreferences.workspaceId, workspace.id))
+    expect(prefsAfter).toHaveLength(0)
+  })
+
+  it("deleting a user cascades their prefs but nulls their authored layouts' created_by", async () => {
+    // Preserves the layout for the team while removing personal prefs.
+    const db = createDb(env)
+    const { user, workspace } = await seedUserAndWorkspace("vl4@x.test", "vl ws4")
+    const [layout] = await db
+      .insert(workspaceViewerLayouts)
+      .values({
+        workspaceId: workspace.id,
+        name: "Keeper",
+        stateJson: "{}",
+        createdByUserId: user.id,
+      })
+      .returning()
+    await db.insert(userViewerPreferences).values({
+      userId: user.id,
+      workspaceId: workspace.id,
+      lastUsedStateJson: "{}",
+    })
+
+    await db.delete(users).where(eq(users.id, user.id))
+
+    const prefsAfter = await db
+      .select()
+      .from(userViewerPreferences)
+      .where(eq(userViewerPreferences.userId, user.id))
+    expect(prefsAfter).toHaveLength(0)
+    const [kept] = await db
+      .select()
+      .from(workspaceViewerLayouts)
+      .where(eq(workspaceViewerLayouts.id, layout!.id))
+    expect(kept).toBeDefined()
+    expect(kept!.createdByUserId).toBeNull()
+  })
+
+  it("composite PK rejects duplicate (user_id, workspace_id) prefs rows", async () => {
+    const db = createDb(env)
+    const { user, workspace } = await seedUserAndWorkspace("vl5@x.test", "vl ws5")
+    await db.insert(userViewerPreferences).values({
+      userId: user.id,
+      workspaceId: workspace.id,
+      lastUsedStateJson: "{}",
+    })
+    await assertRejectsWithMessage(
+      db.insert(userViewerPreferences).values({
+        userId: user.id,
+        workspaceId: workspace.id,
+        lastUsedStateJson: "{}",
+      }),
+      /UNIQUE|PRIMARY KEY|constraint/i,
     )
   })
 })

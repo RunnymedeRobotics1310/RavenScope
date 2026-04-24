@@ -22,6 +22,13 @@
       "when": 1776998428179,
       "tag": "0002_workspace_members",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1777069637452,
+      "tag": "0003_viewer_layouts",
+      "breakpoints": true
     }
   ]
 }
