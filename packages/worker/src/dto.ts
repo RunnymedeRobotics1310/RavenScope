@@ -7,11 +7,26 @@ export interface RequestLinkRequest {
   email: string
 }
 
+export interface WorkspaceInfo {
+  id: string
+  name: string
+  role: "owner" | "member"
+}
+
 export interface UserMeResponse {
   userId: string
   email: string
+  /** Active workspace id. Mirrors `activeWorkspace.id` for backward compatibility. */
   workspaceId: string
+  /** Active workspace name. Mirrors `activeWorkspace.name` for backward compatibility. */
   workspaceName: string
+  activeWorkspace: WorkspaceInfo
+  /** All workspaces the user belongs to, sorted by joinedAt ASC then workspace_id ASC. */
+  workspaces: WorkspaceInfo[]
+}
+
+export interface SwitchWorkspaceRequest {
+  workspaceId: string
 }
 
 export interface ApiKeyCreateRequest {

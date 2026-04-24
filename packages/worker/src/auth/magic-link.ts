@@ -113,36 +113,49 @@ export async function verifyToken(
       }
     }
     // Defensive path: user exists but has no memberships. Shouldn't happen
-    // post-backfill — create a fresh owned workspace for them.
-    const name = workspaceNameFor(row.email)
-    const [ws] = await db.insert(workspaces).values({ name }).returning()
-    await db
-      .insert(workspaceMembers)
-      .values({ workspaceId: ws!.id, userId: existingUser.id, role: "owner" })
+    // post-backfill. Create a fresh owned workspace atomically via db.batch()
+    // so a crash mid-insert leaves no partial rows.
+    const defensiveWsId = crypto.randomUUID()
+    const defensiveWsName = workspaceNameFor(row.email)
+    await db.batch([
+      db.insert(workspaces).values({ id: defensiveWsId, name: defensiveWsName }),
+      db.insert(workspaceMembers).values({
+        workspaceId: defensiveWsId,
+        userId: existingUser.id,
+        role: "owner",
+      }),
+    ])
     return {
       ok: true,
       userId: existingUser.id,
-      workspaceId: ws!.id,
-      workspaceName: ws!.name,
+      workspaceId: defensiveWsId,
+      workspaceName: defensiveWsName,
       email: row.email,
       firstSignIn: false,
     }
   }
 
-  const [newUser] = await db.insert(users).values({ email: row.email }).returning()
-  const [newWorkspace] = await db
-    .insert(workspaces)
-    .values({ name: workspaceNameFor(row.email) })
-    .returning()
-  await db
-    .insert(workspaceMembers)
-    .values({ workspaceId: newWorkspace!.id, userId: newUser!.id, role: "owner" })
+  // First sign-in: create user + workspace + owner membership atomically via
+  // db.batch() so a crash midway leaves no partial rows. IDs are pre-generated
+  // since batch statements cannot chain `.returning()` results across stmts.
+  const newUserId = crypto.randomUUID()
+  const newWsId = crypto.randomUUID()
+  const newWsName = workspaceNameFor(row.email)
+  await db.batch([
+    db.insert(users).values({ id: newUserId, email: row.email }),
+    db.insert(workspaces).values({ id: newWsId, name: newWsName }),
+    db.insert(workspaceMembers).values({
+      workspaceId: newWsId,
+      userId: newUserId,
+      role: "owner",
+    }),
+  ])
 
   return {
     ok: true,
-    userId: newUser!.id,
-    workspaceId: newWorkspace!.id,
-    workspaceName: newWorkspace!.name,
+    userId: newUserId,
+    workspaceId: newWsId,
+    workspaceName: newWsName,
     email: row.email,
     firstSignIn: true,
   }

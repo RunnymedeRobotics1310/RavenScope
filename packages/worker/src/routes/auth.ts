@@ -1,5 +1,6 @@
+import { asc, eq, and } from "drizzle-orm"
 import { Hono } from "hono"
-import { setCookie as honoSetCookie } from "hono/cookie"
+import { getCookie, setCookie as honoSetCookie } from "hono/cookie"
 import type { Env } from "../env"
 import { hashIp, logAudit } from "../audit/log"
 import {
@@ -8,6 +9,7 @@ import {
   SESSION_TTL_SECONDS,
   serializeCookie,
   signSession,
+  verifySession,
 } from "../auth/cookie"
 import { sendMagicLink } from "../auth/email"
 import { generateToken, recordTokenRequest, verifyToken } from "../auth/magic-link"
@@ -15,7 +17,13 @@ import { checkRateLimit } from "../auth/rate-limit"
 import { requireCookieUser } from "../auth/require-cookie-user"
 import { requireCookieKind } from "../auth/user"
 import { createDb } from "../db/client"
-import type { RequestLinkRequest, UserMeResponse } from "../dto"
+import { workspaceMembers, workspaces } from "../db/schema"
+import type {
+  RequestLinkRequest,
+  SwitchWorkspaceRequest,
+  UserMeResponse,
+  WorkspaceInfo,
+} from "../dto"
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
@@ -122,14 +130,116 @@ authRoutes.post("/logout", requireCookieUser, async (c) => {
   return c.body(null, 204)
 })
 
-authRoutes.get("/me", requireCookieUser, (c) => {
+authRoutes.get("/me", requireCookieUser, async (c) => {
   const user = c.var.user
   requireCookieKind(user)
+
+  const db = createDb(c.env)
+  const memberships = await db
+    .select({
+      id: workspaces.id,
+      name: workspaces.name,
+      role: workspaceMembers.role,
+    })
+    .from(workspaceMembers)
+    .innerJoin(workspaces, eq(workspaces.id, workspaceMembers.workspaceId))
+    .where(eq(workspaceMembers.userId, user.userId))
+    .orderBy(asc(workspaceMembers.joinedAt), asc(workspaceMembers.workspaceId))
+
+  const workspaceList: WorkspaceInfo[] = memberships.map((m) => ({
+    id: m.id,
+    name: m.name,
+    role: m.role as "owner" | "member",
+  }))
+
+  const activeWorkspace: WorkspaceInfo = {
+    id: user.workspaceId,
+    name: user.workspaceName,
+    role: user.role,
+  }
+
   const payload: UserMeResponse = {
     userId: user.userId,
     email: user.email,
     workspaceId: user.workspaceId,
     workspaceName: user.workspaceName,
+    activeWorkspace,
+    workspaces: workspaceList,
   }
   return c.json(payload)
+})
+
+authRoutes.post("/switch-workspace", requireCookieUser, async (c) => {
+  const user = c.var.user
+  requireCookieKind(user)
+
+  const body = await c.req.json<SwitchWorkspaceRequest>().catch(() => null)
+  if (!body || typeof body.workspaceId !== "string" || body.workspaceId.trim() === "") {
+    return c.json({ error: "invalid_request" }, 400)
+  }
+  const targetWsid = body.workspaceId.trim()
+
+  const db = createDb(c.env)
+
+  // Workspace must exist.
+  const [targetWorkspace] = await db
+    .select()
+    .from(workspaces)
+    .where(eq(workspaces.id, targetWsid))
+    .limit(1)
+  if (!targetWorkspace) {
+    return c.json({ error: "unknown_workspace" }, 404)
+  }
+
+  // User must be a member of the target workspace.
+  const [membership] = await db
+    .select()
+    .from(workspaceMembers)
+    .where(
+      and(
+        eq(workspaceMembers.workspaceId, targetWsid),
+        eq(workspaceMembers.userId, user.userId),
+      ),
+    )
+    .limit(1)
+  if (!membership) {
+    return c.json({ error: "not_a_member" }, 403)
+  }
+
+  // Re-read the cookie to extract the original exp for preservation.
+  // (The handler-invariant "never re-parse the Cookie header" is about using
+  // `workspaceId` from c.var.user; this route needs `exp` which isn't on it.)
+  const raw = getCookie(c, SESSION_COOKIE_NAME)!
+  const keyset = await loadKeySet(c.env.SESSION_SECRET)
+  const verifyResult = await verifySession(raw, keyset)
+  const exp = verifyResult.ok
+    ? verifyResult.payload.exp
+    : Date.now() + SESSION_TTL_SECONDS * 1000
+
+  const reSigned = await signSession(
+    { uid: user.userId, wsid: targetWsid, exp },
+    keyset,
+  )
+  honoSetCookie(c, SESSION_COOKIE_NAME, reSigned, {
+    maxAge: SESSION_TTL_SECONDS,
+    path: "/",
+    secure: new URL(c.req.url).protocol === "https:",
+    httpOnly: true,
+    sameSite: "Lax",
+  })
+
+  const ipHash = await hashIp(c.req.header("CF-Connecting-IP") ?? "unknown")
+  await logAudit(db, {
+    eventType: "workspace.switched",
+    actorUserId: user.userId,
+    workspaceId: targetWsid,
+    ipHash,
+    metadata: {
+      reason: "explicit",
+      previous_wsid: user.workspaceId,
+      new_wsid: targetWsid,
+    },
+  })
+
+  return c.body(null, 204)
 })
