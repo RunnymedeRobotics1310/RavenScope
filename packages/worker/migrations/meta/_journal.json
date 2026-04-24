@@ -15,6 +15,13 @@
       "when": 1776981429141,
       "tag": "0001_daily_quota",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1776998428179,
+      "tag": "0002_workspace_members",
+      "breakpoints": true
     }
   ]
 }

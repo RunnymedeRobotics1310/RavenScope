@@ -17,6 +17,7 @@ import {
   sessionBatches,
   telemetrySessions,
   users,
+  workspaceMembers,
   workspaces,
 } from "../src/db/schema"
 import type { CreateSessionRequest, TelemetryEntryRequest } from "../src/dto"
@@ -29,6 +30,7 @@ async function wipeAll() {
   await db.delete(sessionBatches)
   await db.delete(telemetrySessions)
   await db.delete(apiKeys)
+  await db.delete(workspaceMembers)
   await db.delete(workspaces)
   await db.delete(users)
   await db.delete(dailyQuota)
@@ -42,10 +44,10 @@ async function seedBearer(): Promise<string> {
     .insert(users)
     .values({ email: `quota-${crypto.randomUUID()}@test.local` })
     .returning()
-  const [workspace] = await db
-    .insert(workspaces)
-    .values({ ownerUserId: user!.id, name: "quota-ws" })
-    .returning()
+  const [workspace] = await db.insert(workspaces).values({ name: "quota-ws" }).returning()
+  await db
+    .insert(workspaceMembers)
+    .values({ workspaceId: workspace!.id, userId: user!.id, role: "owner" })
   const generated = await generateApiKey()
   await db.insert(apiKeys).values({
     workspaceId: workspace!.id,

@@ -11,9 +11,9 @@
  *   batched in a single db.batch() so a crash midway leaves no partial rows.
  */
 
-import { and, eq } from "drizzle-orm"
+import { and, asc, eq } from "drizzle-orm"
 import type { Db } from "../db/client"
-import { loginTokens, users, workspaces } from "../db/schema"
+import { loginTokens, users, workspaceMembers, workspaces } from "../db/schema"
 
 export const TOKEN_TTL_MS = 15 * 60 * 1000 // 15 minutes
 
@@ -87,19 +87,22 @@ export async function verifyToken(
     .limit(1)
 
   if (existingUser) {
-    const [existingWorkspace] = await db
-      .select()
-      .from(workspaces)
-      .where(eq(workspaces.ownerUserId, existingUser.id))
+    // Pick the user's oldest membership. Tie-breaker on workspace_id keeps
+    // the choice deterministic under concurrent sign-ins and under backfill
+    // rows that share a created_at millisecond. U3 will replace this with
+    // "most-recently-active" once the session tracks it.
+    const [oldestMembership] = await db
+      .select({ workspaceId: workspaceMembers.workspaceId })
+      .from(workspaceMembers)
+      .where(eq(workspaceMembers.userId, existingUser.id))
+      .orderBy(asc(workspaceMembers.joinedAt), asc(workspaceMembers.workspaceId))
       .limit(1)
-    if (!existingWorkspace) {
-      // Should not happen — workspaces row is created atomically with user
-      // on first sign-in — but be defensive.
-      const name = workspaceNameFor(row.email)
+    if (oldestMembership) {
       const [ws] = await db
-        .insert(workspaces)
-        .values({ ownerUserId: existingUser.id, name })
-        .returning()
+        .select()
+        .from(workspaces)
+        .where(eq(workspaces.id, oldestMembership.workspaceId))
+        .limit(1)
       return {
         ok: true,
         userId: existingUser.id,
@@ -109,11 +112,18 @@ export async function verifyToken(
         firstSignIn: false,
       }
     }
+    // Defensive path: user exists but has no memberships. Shouldn't happen
+    // post-backfill — create a fresh owned workspace for them.
+    const name = workspaceNameFor(row.email)
+    const [ws] = await db.insert(workspaces).values({ name }).returning()
+    await db
+      .insert(workspaceMembers)
+      .values({ workspaceId: ws!.id, userId: existingUser.id, role: "owner" })
     return {
       ok: true,
       userId: existingUser.id,
-      workspaceId: existingWorkspace.id,
-      workspaceName: existingWorkspace.name,
+      workspaceId: ws!.id,
+      workspaceName: ws!.name,
       email: row.email,
       firstSignIn: false,
     }
@@ -122,8 +132,11 @@ export async function verifyToken(
   const [newUser] = await db.insert(users).values({ email: row.email }).returning()
   const [newWorkspace] = await db
     .insert(workspaces)
-    .values({ ownerUserId: newUser!.id, name: workspaceNameFor(row.email) })
+    .values({ name: workspaceNameFor(row.email) })
     .returning()
+  await db
+    .insert(workspaceMembers)
+    .values({ workspaceId: newWorkspace!.id, userId: newUser!.id, role: "owner" })
 
   return {
     ok: true,
