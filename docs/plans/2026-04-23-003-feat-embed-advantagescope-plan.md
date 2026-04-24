@@ -292,9 +292,26 @@ Adjacent context surfaced during research:
 
 ### Deferred to Implementation
 
-- **Exact mechanism of the bootstrap postMessage dispatch.** Depends on what
-  AS Lite's main window exposes at boot. U1 resolves this via a spike against
-  the pinned AS release tag.
+- **Exact mechanism of the bootstrap postMessage dispatch.** **Resolved by
+  U1 code-read (2026-04-23).** `hubPort` in
+  `~/src/1310/AdvantageScope/src/main/lite/main.ts:43` is a module-scoped
+  `let`, never attached to `window`. An injected-only bootstrap `<script>`
+  cannot reach it. The plan's `main.ts.patch` fallback is required.
+  **Recommended patch shape:** add ~5 lines to `initHub()` (after the
+  `show-when-ready` send at line 266 in the reviewed tag) that read
+  `new URLSearchParams(location.search).get("log")` and, when set,
+  dispatch `sendMessage(hubPort, "open-files", { files: [autoLog], merge:
+  false })`. Cleaner than exposing `hubPort` globally: no window pollution,
+  idempotent on reload, and directly upstreamable as a deep-link feature
+  request. Iframe `src` in U7 becomes `/v/:id/?log=<sessionId>.wpilog`
+  — Worker handler then ignores the `log` name and always returns the
+  session's single log. Consequence for the plan:
+    - `bootstrap.js` is **no longer needed** as a separate artifact.
+      U2/U2b simplify: only the `main.ts.patch` is shipped alongside the
+      publish script.
+    - Upstream contribution path becomes: submit the 5-line URL-param
+      patch to AS upstream. If accepted, our `main.ts.patch` is deleted
+      in a later version bump with zero other changes.
 - **Whether Lite's bundled `lite/static/bundledAssets/` needs to re-upload to
   R2 on every AS version bump, or whether a content-hash cache saves work.**
   Deferred — first version: always re-upload. Optimize later if the friction
