@@ -91,6 +91,31 @@ meViewerLayoutRoutes.get("/viewer-layout", async (c) => {
     }
   }
 
+  // Sole-layout fallback: when the workspace has exactly one shared
+  // layout and the user has not picked an explicit default, treat the
+  // sole layout as the effective default. Rationale: new teammates and
+  // users who never set a default should land on the team's only
+  // layout automatically — frictionless onboarding. The behavior
+  // dissolves as soon as a second layout exists (two layouts = user
+  // must pick explicitly).
+  const workspaceLayouts = await db
+    .select({
+      id: workspaceViewerLayouts.id,
+      stateJson: workspaceViewerLayouts.stateJson,
+    })
+    .from(workspaceViewerLayouts)
+    .where(eq(workspaceViewerLayouts.workspaceId, user.workspaceId))
+    .limit(2)
+  if (workspaceLayouts.length === 1) {
+    const sole = workspaceLayouts[0]!
+    const body: ViewerLayoutBootstrap = {
+      state: tryParse(sole.stateJson),
+      source: "default",
+      defaultLayoutId: sole.id,
+    }
+    return c.json(body)
+  }
+
   if (prefs?.lastUsedStateJson) {
     const body: ViewerLayoutBootstrap = {
       state: tryParse(prefs.lastUsedStateJson),

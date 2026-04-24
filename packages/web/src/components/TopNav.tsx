@@ -1,13 +1,17 @@
+import * as Dialog from "@radix-ui/react-dialog"
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { Check, ChevronDown } from "lucide-react"
+import { Check, ChevronDown, X } from "lucide-react"
+import { useState } from "react"
 import { Link, NavLink } from "react-router-dom"
 import { logout, switchWorkspace, type WorkspaceInfo } from "../lib/api"
 import { useMe } from "../lib/auth"
+import { Button } from "./Button"
 
 export function TopNav() {
   const me = useMe()
   const qc = useQueryClient()
+  const [confirmSignOut, setConfirmSignOut] = useState(false)
   const signOut = useMutation({
     mutationFn: logout,
     onSuccess: () => {
@@ -51,7 +55,7 @@ export function TopNav() {
             onSwitch={(id) => switchMut.mutate(id)}
           />
           <button
-            onClick={() => signOut.mutate()}
+            onClick={() => setConfirmSignOut(true)}
             className="w-8 h-8 bg-accent text-accent-fg font-display font-semibold text-[13px]"
             title={`Sign out (${me.data.email})`}
           >
@@ -59,6 +63,47 @@ export function TopNav() {
           </button>
         </div>
       )}
+
+      <Dialog.Root open={confirmSignOut} onOpenChange={setConfirmSignOut}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 bg-black/50" />
+          <Dialog.Content className="fixed top-[28%] left-1/2 -translate-x-1/2 w-[420px] max-w-[92vw] bg-page border border-border">
+            <div className="flex items-start justify-between px-7 py-5 border-b border-border">
+              <Dialog.Title className="font-display text-[18px] font-semibold text-primary">
+                Sign out?
+              </Dialog.Title>
+              <Dialog.Close asChild>
+                <button className="text-muted hover:text-primary" aria-label="Close">
+                  <X size={18} />
+                </button>
+              </Dialog.Close>
+            </div>
+            <div className="px-7 py-5 text-[14px] text-secondary leading-relaxed">
+              You'll be returned to the sign-in page. Session state and any
+              unsaved UI state on this page will be cleared.
+              {me.data?.email && (
+                <div className="mt-3 bg-surface border border-border px-3 py-2 text-[13px] font-mono text-primary">
+                  {me.data.email}
+                </div>
+              )}
+            </div>
+            <div className="flex justify-end gap-3 px-7 py-4 border-t border-border">
+              <Dialog.Close asChild>
+                <Button variant="secondary" type="button">
+                  Cancel
+                </Button>
+              </Dialog.Close>
+              <Button
+                variant="primary"
+                onClick={() => signOut.mutate()}
+                disabled={signOut.isPending}
+              >
+                {signOut.isPending ? "Signing out…" : "Sign out"}
+              </Button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
     </header>
   )
 }

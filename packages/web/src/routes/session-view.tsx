@@ -226,7 +226,14 @@ function LayoutsMenu({
   }
 
   const layouts = layoutsQuery.data ?? []
-  const currentDefaultId = prefsQuery.data?.defaultLayoutId ?? null
+  const explicitDefaultId = prefsQuery.data?.defaultLayoutId ?? null
+  // Effective default includes the server's sole-layout fallback:
+  // when the user has no explicit default and the workspace has
+  // exactly one layout, that layout is treated as the default. Keep
+  // the UI truth in one place so the check mark matches the bootstrap
+  // response the viewer actually loads.
+  const effectiveDefaultId =
+    explicitDefaultId ?? (layouts.length === 1 ? layouts[0]!.id : null)
   const disabled = !iframeReady || !workspaceId || capturing
 
   return (
@@ -281,10 +288,13 @@ function LayoutsMenu({
                 label="Set as my default"
                 layouts={layouts}
                 emptyLabel="No saved layouts yet"
-                checkFor={currentDefaultId}
+                checkFor={effectiveDefaultId}
                 onPick={(layout) => setDefaultMutation.mutate(layout.id)}
                 footer={
-                  currentDefaultId ? (
+                  // "Clear my default" only makes sense for an explicit
+                  // pick. The sole-layout fallback is not user-cleared
+                  // — adding a second layout dissolves it instead.
+                  explicitDefaultId ? (
                     <DropdownMenu.Item
                       className="px-3 py-2 text-[13px] text-secondary outline-none cursor-pointer data-[highlighted]:bg-page"
                       onSelect={() => setDefaultMutation.mutate(null)}

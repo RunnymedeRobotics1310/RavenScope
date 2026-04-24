@@ -387,6 +387,119 @@ describe("GET /api/me/viewer-layout bootstrap", () => {
     expect(body).toEqual({ state: null, source: "none" })
   })
 
+  it("treats the workspace's sole layout as the default for new users", async () => {
+    // Sole-layout fallback: zero explicit-default, zero last-used,
+    // one workspace layout -> that layout becomes the effective default.
+    const { workspaceId, cookie } = await seedWorkspace("sole@t.local", "soleWs")
+    const cr = await SELF.fetch(
+      `${BASE}/api/workspaces/${workspaceId}/layouts`,
+      {
+        method: "POST",
+        headers: { Cookie: cookie, "content-type": "application/json" },
+        body: JSON.stringify({ name: "Team view", state: { marker: "sole" } }),
+      },
+    )
+    const sole = (await cr.json()) as ViewerLayoutDto
+
+    // A brand-new teammate (never set a default, no last-used).
+    const newbie = await addMember(workspaceId, "newbie@t.local")
+    const res = await SELF.fetch(`${BASE}/api/me/viewer-layout`, {
+      headers: { Cookie: newbie.cookie },
+    })
+    const body = (await res.json()) as ViewerLayoutBootstrap
+    expect(body.source).toBe("default")
+    expect(body.defaultLayoutId).toBe(sole.id)
+    expect(body.state).toEqual({ marker: "sole" })
+  })
+
+  it("sole-layout default takes priority over last-used when no explicit default", async () => {
+    const { workspaceId, cookie } = await seedWorkspace("slu@t.local", "sluWs")
+    const cr = await SELF.fetch(
+      `${BASE}/api/workspaces/${workspaceId}/layouts`,
+      {
+        method: "POST",
+        headers: { Cookie: cookie, "content-type": "application/json" },
+        body: JSON.stringify({ name: "Only one", state: { marker: "sole" } }),
+      },
+    )
+    const sole = (await cr.json()) as ViewerLayoutDto
+    // Seed the creator's last-used — it would win without the sole
+    // fallback. With the fallback, the sole layout wins.
+    await SELF.fetch(`${BASE}/api/me/viewer-layout/last-used`, {
+      method: "PUT",
+      headers: { Cookie: cookie, "content-type": "application/json" },
+      body: JSON.stringify({ state: { marker: "last-used-loses" } }),
+    })
+
+    const res = await SELF.fetch(`${BASE}/api/me/viewer-layout`, {
+      headers: { Cookie: cookie },
+    })
+    const body = (await res.json()) as ViewerLayoutBootstrap
+    expect(body.source).toBe("default")
+    expect(body.defaultLayoutId).toBe(sole.id)
+    expect(body.state).toEqual({ marker: "sole" })
+  })
+
+  it("sole-layout default dissolves once a second layout is added", async () => {
+    // Two layouts and no explicit default -> user must pick; the
+    // bootstrap drops back to last-used (or none).
+    const { workspaceId, cookie } = await seedWorkspace("two@t.local", "twoWs")
+    await SELF.fetch(`${BASE}/api/workspaces/${workspaceId}/layouts`, {
+      method: "POST",
+      headers: { Cookie: cookie, "content-type": "application/json" },
+      body: JSON.stringify({ name: "First", state: { marker: 1 } }),
+    })
+    await SELF.fetch(`${BASE}/api/workspaces/${workspaceId}/layouts`, {
+      method: "POST",
+      headers: { Cookie: cookie, "content-type": "application/json" },
+      body: JSON.stringify({ name: "Second", state: { marker: 2 } }),
+    })
+    await SELF.fetch(`${BASE}/api/me/viewer-layout/last-used`, {
+      method: "PUT",
+      headers: { Cookie: cookie, "content-type": "application/json" },
+      body: JSON.stringify({ state: { marker: "mine" } }),
+    })
+
+    const res = await SELF.fetch(`${BASE}/api/me/viewer-layout`, {
+      headers: { Cookie: cookie },
+    })
+    const body = (await res.json()) as ViewerLayoutBootstrap
+    expect(body.source).toBe("last-used")
+    expect(body.state).toEqual({ marker: "mine" })
+  })
+
+  it("sole-layout default does not override an explicit user default", async () => {
+    // Two layouts, user picked the second one — the sole-layout
+    // fallback must not fire (there are two).
+    const { workspaceId, cookie } = await seedWorkspace("exp@t.local", "expWs")
+    await SELF.fetch(`${BASE}/api/workspaces/${workspaceId}/layouts`, {
+      method: "POST",
+      headers: { Cookie: cookie, "content-type": "application/json" },
+      body: JSON.stringify({ name: "Team A", state: { marker: "a" } }),
+    })
+    const crB = await SELF.fetch(
+      `${BASE}/api/workspaces/${workspaceId}/layouts`,
+      {
+        method: "POST",
+        headers: { Cookie: cookie, "content-type": "application/json" },
+        body: JSON.stringify({ name: "Team B", state: { marker: "b" } }),
+      },
+    )
+    const teamB = (await crB.json()) as ViewerLayoutDto
+    await SELF.fetch(`${BASE}/api/me/viewer-preferences`, {
+      method: "PUT",
+      headers: { Cookie: cookie, "content-type": "application/json" },
+      body: JSON.stringify({ defaultLayoutId: teamB.id }),
+    })
+
+    const res = await SELF.fetch(`${BASE}/api/me/viewer-layout`, {
+      headers: { Cookie: cookie },
+    })
+    const body = (await res.json()) as ViewerLayoutBootstrap
+    expect(body.defaultLayoutId).toBe(teamB.id)
+    expect(body.state).toEqual({ marker: "b" })
+  })
+
   it("returns last-used when set and no default", async () => {
     const { userId, workspaceId, cookie } = await seedWorkspace("lu@t.local", "luws")
     const state = { sidebar: { width: 200, expanded: [] }, tabs: { selected: 0, tabs: [] } }
