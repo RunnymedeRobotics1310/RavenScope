@@ -1,7 +1,7 @@
-import { and, eq } from "drizzle-orm"
+import { eq } from "drizzle-orm"
 import { Hono } from "hono"
 import { requireCookieUser } from "../auth/require-cookie-user"
-import { requireCookieKind } from "../auth/user"
+import { loadOwnedSession } from "../auth/session-owner"
 import { createDb } from "../db/client"
 import { telemetrySessions } from "../db/schema"
 import type { Env } from "../env"
@@ -20,22 +20,12 @@ export const wpilogRoutes = new Hono<{ Bindings: Env }>()
 wpilogRoutes.use("*", requireCookieUser)
 
 wpilogRoutes.get("/:id/wpilog", async (c) => {
-  const user = c.var.user
-  requireCookieKind(user)
   const id = c.req.param("id")
+  const session = await loadOwnedSession(c, id)
+  if (!session) return c.json({ error: "not_found" }, 404)
+  const user = c.var.user
 
   const db = createDb(c.env)
-  const [session] = await db
-    .select()
-    .from(telemetrySessions)
-    .where(
-      and(
-        eq(telemetrySessions.id, id),
-        eq(telemetrySessions.workspaceId, user.workspaceId),
-      ),
-    )
-    .limit(1)
-  if (!session) return c.json({ error: "not_found" }, 404)
 
   // Cache gate: cache is fresh when wpilog_generated_at >=
   // COALESCE(last_batch_at, ended_at, 0).
