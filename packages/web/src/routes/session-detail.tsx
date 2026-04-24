@@ -87,8 +87,11 @@ export function SessionDetail() {
                     Delete
                   </Button>
                   <a href={sessionDownloadUrl(id)} download>
-                    <Button variant="primary">Download .wpilog</Button>
+                    <Button variant="secondary">Download .wpilog</Button>
                   </a>
+                  <Link to={`/sessions/${id}/view`}>
+                    <Button variant="primary">Open viewer</Button>
+                  </Link>
                 </div>
               </div>
               <h1 className="font-display text-[40px] font-medium leading-tight tracking-[-1px] text-primary flex items-baseline gap-4">
