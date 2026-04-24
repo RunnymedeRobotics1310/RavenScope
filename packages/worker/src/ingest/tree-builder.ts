@@ -1,7 +1,7 @@
 import type { KeyTreeNode, KeyTreeResponse, TelemetryEntryRequest } from "../dto"
 import type { Env } from "../env"
 import { batchPrefix, treeKey } from "../storage/keys"
-import { putTextBlob, readPlainBlobStream, readTextBlob } from "../storage/r2"
+import { getBlob, listBlobs, putTextBlob, readPlainBlobStream, readTextBlob } from "../storage/r2"
 
 interface Aggregate {
   ntType: string
@@ -19,7 +19,7 @@ interface Aggregate {
  */
 export async function buildTree(env: Env, sessionDbId: string): Promise<KeyTreeResponse> {
   const prefix = batchPrefix(sessionDbId) + "batch-"
-  const listed = await env.BLOBS.list({ prefix })
+  const listed = await listBlobs(env, { prefix })
   const keys = listed.objects
     .map((o) => o.key)
     .filter((k) => k.endsWith(".jsonl"))
@@ -29,7 +29,7 @@ export async function buildTree(env: Env, sessionDbId: string): Promise<KeyTreeR
   let malformed = 0
 
   for (const key of keys) {
-    const obj = await env.BLOBS.get(key)
+    const obj = await getBlob(env, key)
     if (!obj) continue
     // readPlainBlobStream decompresses gzipped objects transparently and
     // passes legacy uncompressed objects through unchanged.

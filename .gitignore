@@ -17,3 +17,8 @@ package-lock.json
 
 # setup.sh backs up wrangler.toml on first successful run
 wrangler.toml.bak
+
+# Local agent / review artifacts (session-scoped worktrees + per-run
+# reviewer JSON dumps).
+.claude/
+.context/

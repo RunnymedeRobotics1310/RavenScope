@@ -9,10 +9,10 @@ import { caps, QuotaExceededError, toUtcDateString } from "./daily-quota"
 
 /**
  * 429 Too Many Requests with Retry-After + a plain-text body naming the
- * cap that was hit. Used by every route that catches QuotaExceededError
- * from the storage wrappers.
+ * cap that was hit. Internal to this module; routes go through
+ * `handleQuotaExceeded`.
  */
-export function cappedResponse(err: QuotaExceededError): Response {
+function cappedResponse(err: QuotaExceededError): Response {
   return new Response(`quota_cap_hit: ${err.metric}`, {
     status: 429,
     headers: {
@@ -47,7 +47,7 @@ export function handleQuotaExceeded(
  * sets when its chargeOrThrow fires for the first time today. Returns
  * the metric, or null if absent / unrecognised.
  */
-export function firstBreachFromHeader(
+function firstBreachFromHeader(
   res: Response,
 ): QuotaExceededError["metric"] | null {
   const raw = res.headers.get("X-Quota-First-Breach")
@@ -58,9 +58,10 @@ export function firstBreachFromHeader(
 /**
  * Called by Worker routes when the DO-returned 429 carries the
  * X-Quota-First-Breach header. Reconstructs the metric + retryAfter
- * from the response and reads the current counter row from D1 so the
- * alert email + audit log include the real counter value (the DO→
- * Worker fetch boundary doesn't carry the row contents through).
+ * from the response headers and reads the counter row from D1 keyed on
+ * the DO-emitted `X-Quota-Breach-Date` (not `new Date()` — the worker's
+ * waitUntil can fire after UTC midnight while the breach row stays
+ * keyed to the prior day).
  */
 export function scheduleDoAlert(
   c: Context<{ Bindings: Env }>,
@@ -70,17 +71,17 @@ export function scheduleDoAlert(
   const metric = firstBreachFromHeader(res)
   if (!metric) return
   const retryAfter = Number(res.headers.get("Retry-After")) || 60
+  const breachDate = res.headers.get("X-Quota-Breach-Date") || toUtcDateString(new Date())
   c.executionCtx.waitUntil(
-    (async () => {
+    guardWaitUntil("scheduleDoAlert", async () => {
       const db = createDb(c.env)
-      const today = toUtcDateString(new Date())
       const [row] = await db
         .select()
         .from(dailyQuota)
-        .where(sql`${dailyQuota.date} = ${today}`)
+        .where(sql`${dailyQuota.date} = ${breachDate}`)
         .limit(1)
       const err = new QuotaExceededError(metric, retryAfter, true, {
-        date: today,
+        date: breachDate,
         bytesUploaded: row?.bytesUploaded ?? 0,
         classAOps: row?.classAOps ?? 0,
         classBOps: row?.classBOps ?? 0,
@@ -89,7 +90,7 @@ export function scheduleDoAlert(
         alertedClassB: (row?.alertedClassB ?? 0) !== 0,
       })
       await runAlertAndAudit(c, err, workspaceId)
-    })(),
+    }),
   )
 }
 
@@ -99,7 +100,30 @@ function scheduleAlertAndAudit(
   workspaceId?: string,
 ): void {
   if (!err.firstBreach) return
-  c.executionCtx.waitUntil(runAlertAndAudit(c, err, workspaceId))
+  c.executionCtx.waitUntil(
+    guardWaitUntil("scheduleAlertAndAudit", () => runAlertAndAudit(c, err, workspaceId)),
+  )
+}
+
+/**
+ * Wraps a waitUntil promise with a top-level try/catch so a thrown
+ * closure — D1 transient, Resend outage, unexpected bug — surfaces in
+ * Wrangler tail via console.error instead of being swallowed silently.
+ *
+ * The `alerted_*` latch is flipped in the main UPSERT (see
+ * `daily-quota.ts`), BEFORE this closure runs. Without this guard a
+ * post-latch throw loses the operator email AND the audit_log row for
+ * the entire UTC day, with no observability path.
+ */
+async function guardWaitUntil(
+  label: string,
+  fn: () => Promise<void>,
+): Promise<void> {
+  try {
+    await fn()
+  } catch (err) {
+    console.error(`[quota/${label}] waitUntil task threw:`, err)
+  }
 }
 
 async function runAlertAndAudit(
