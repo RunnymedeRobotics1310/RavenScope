@@ -26,6 +26,15 @@ export const CAP_BYTES = 1024 * 1024 * 1024 // 1 GiB compressed bytes / UTC day
 export const CAP_CLASS_A = 5_000
 export const CAP_CLASS_B = 50_000
 
+// Guard against a misconfigured deploy (e.g. CAP_* accidentally set to 0)
+// silently locking every write path behind a 429. A positive-value cap is
+// a precondition of the module, checked once at load time.
+if (CAP_BYTES <= 0 || CAP_CLASS_A <= 0 || CAP_CLASS_B <= 0) {
+  throw new Error(
+    `daily-quota: all CAP_* must be > 0 (bytes=${CAP_BYTES}, classA=${CAP_CLASS_A}, classB=${CAP_CLASS_B})`,
+  )
+}
+
 export type QuotaMetric = "bytes" | "classA" | "classB"
 
 export interface QuotaCharge {
@@ -55,11 +64,19 @@ export type ChargeResult =
     }
 
 /**
- * Atomically UPSERT the counters for today, re-read the row, and check
- * against the caps. If any cap is now exceeded AND the matching
- * `alerted_*` flag was 0, flip it to 1 in-place and mark firstBreach.
+ * Atomically UPSERT today's counters, conditionally flip the
+ * `alerted_*` latches in-place, and return whether this call was the
+ * first breach per metric.
  *
- * A zero-valued charge (all three metrics omitted or 0) is a no-op.
+ * Concurrency model: the whole operation is a single D1 `batch` so the
+ * pre-UPDATE snapshot and the UPSERT run in one transaction. D1
+ * serializes writes at the database level, so two concurrent racers
+ * produce exactly one `firstBreach: true` result — the second racer's
+ * pre-snapshot already sees `alerted_* = 1`. This replaces an earlier
+ * three-statement pattern (UPSERT, SELECT, UPDATE-where-0) that was
+ * racy at the alert layer (review finding F5).
+ *
+ * A zero-valued charge short-circuits without hitting the database.
  */
 export async function chargeQuota(
   env: Env,
@@ -72,23 +89,43 @@ export async function chargeQuota(
   const today = toUtcDateString(now)
 
   if (bytes === 0 && classA === 0 && classB === 0) {
-    // No-op short-circuit; still need the current row for callers who
-    // care about `ok`.
-    const row = await readOrZero(env, today)
-    return capCheck(row, 0, 0, 0, now)
+    // No-op short-circuit; read the current row for callers who care
+    // about `ok`.
+    const row = await readRow(env, today)
+    return capCheck(row, now)
   }
 
   const db = createDb(env)
 
-  // Atomic UPSERT + increment. D1 supports SQLite's ON CONFLICT DO
-  // UPDATE. `excluded` refers to the row that would have been inserted.
-  await db
+  // The UPSERT's ON CONFLICT branch bumps the counters AND flips each
+  // alerted_* latch from 0 → 1 exactly when THIS charge pushes the
+  // corresponding counter past the cap for the first time. Folding
+  // the conditional flip into the same statement as the increment
+  // removes the earlier UPDATE-where-0 round-trip (review finding F6)
+  // and closes the 0→1 double-email race (review finding F5) because
+  // the pre-snapshot SELECT and the UPSERT run inside one db.batch.
+  const selectPrev = db
+    .select({
+      alertedBytes: dailyQuota.alertedBytes,
+      alertedClassA: dailyQuota.alertedClassA,
+      alertedClassB: dailyQuota.alertedClassB,
+    })
+    .from(dailyQuota)
+    .where(sql`${dailyQuota.date} = ${today}`)
+
+  const upsertReturning = db
     .insert(dailyQuota)
     .values({
       date: today,
       bytesUploaded: bytes,
       classAOps: classA,
       classBOps: classB,
+      // On a fresh row, seed alerted_* correctly if this single charge
+      // already crosses a cap (edge case: very first charge of the day
+      // exceeds CAP).
+      alertedBytes: bytes > CAP_BYTES ? 1 : 0,
+      alertedClassA: classA > CAP_CLASS_A ? 1 : 0,
+      alertedClassB: classB > CAP_CLASS_B ? 1 : 0,
       updatedAt: now,
     })
     .onConflictDoUpdate({
@@ -97,43 +134,61 @@ export async function chargeQuota(
         bytesUploaded: sql`${dailyQuota.bytesUploaded} + ${bytes}`,
         classAOps: sql`${dailyQuota.classAOps} + ${classA}`,
         classBOps: sql`${dailyQuota.classBOps} + ${classB}`,
+        alertedBytes: sql`CASE WHEN ${dailyQuota.bytesUploaded} + ${bytes} > ${CAP_BYTES} AND ${dailyQuota.alertedBytes} = 0 THEN 1 ELSE ${dailyQuota.alertedBytes} END`,
+        alertedClassA: sql`CASE WHEN ${dailyQuota.classAOps} + ${classA} > ${CAP_CLASS_A} AND ${dailyQuota.alertedClassA} = 0 THEN 1 ELSE ${dailyQuota.alertedClassA} END`,
+        alertedClassB: sql`CASE WHEN ${dailyQuota.classBOps} + ${classB} > ${CAP_CLASS_B} AND ${dailyQuota.alertedClassB} = 0 THEN 1 ELSE ${dailyQuota.alertedClassB} END`,
         updatedAt: now,
       },
     })
+    .returning()
 
-  const row = await readOrZero(env, today)
-  const result = capCheck(row, bytes, classA, classB, now)
-  if (!result.ok) {
-    // Flip the matching alerted_* flag 0→1 if this is the first breach.
-    if (result.firstBreach) {
-      const field = alertedField(result.hitCap)
-      await db
-        .update(dailyQuota)
-        .set({ [field]: 1, updatedAt: now })
-        .where(sql`${dailyQuota.date} = ${today} AND ${dailyQuota[field]} = 0`)
-    }
+  // db.batch runs both statements in one D1 transaction. selectPrev
+  // observes the row AS IT WAS before the UPSERT in the same batch.
+  const [prevRows, postRows] = await db.batch([selectPrev, upsertReturning])
+  const prev = prevRows?.[0] as
+    | { alertedBytes: number; alertedClassA: number; alertedClassB: number }
+    | undefined
+  const post = postRows?.[0] as typeof dailyQuota.$inferSelect | undefined
+  if (!post) {
+    throw new Error("daily-quota: UPSERT returned no row")
   }
-  return result
+  const row: DailyQuotaRow = {
+    date: post.date,
+    bytesUploaded: post.bytesUploaded,
+    classAOps: post.classAOps,
+    classBOps: post.classBOps,
+    alertedBytes: post.alertedBytes !== 0,
+    alertedClassA: post.alertedClassA !== 0,
+    alertedClassB: post.alertedClassB !== 0,
+  }
+  const firstBreaches = {
+    bytes: post.alertedBytes !== 0 && (prev?.alertedBytes ?? 0) === 0,
+    classA: post.alertedClassA !== 0 && (prev?.alertedClassA ?? 0) === 0,
+    classB: post.alertedClassB !== 0 && (prev?.alertedClassB ?? 0) === 0,
+  }
+  return capCheck(row, now, firstBreaches)
 }
 
 function capCheck(
   row: DailyQuotaRow,
-  _bytesCharged: number,
-  _classACharged: number,
-  _classBCharged: number,
   now: Date,
+  firstBreaches: Record<QuotaMetric, boolean> = {
+    bytes: false,
+    classA: false,
+    classB: false,
+  },
 ): ChargeResult {
   // Priority order: bytes > classA > classB. Bytes is the most
   // expensive metric to exceed and the most useful signal to an
   // operator, so it wins when multiple caps trip simultaneously.
   if (row.bytesUploaded > CAP_BYTES) {
-    return cappedResult(row, "bytes", !row.alertedBytes, now)
+    return cappedResult(row, "bytes", firstBreaches.bytes, now)
   }
   if (row.classAOps > CAP_CLASS_A) {
-    return cappedResult(row, "classA", !row.alertedClassA, now)
+    return cappedResult(row, "classA", firstBreaches.classA, now)
   }
   if (row.classBOps > CAP_CLASS_B) {
-    return cappedResult(row, "classB", !row.alertedClassB, now)
+    return cappedResult(row, "classB", firstBreaches.classB, now)
   }
   return { ok: true, row }
 }
@@ -149,26 +204,11 @@ function cappedResult(
     hitCap,
     retryAfter: secondsUntilUtcMidnight(now),
     firstBreach,
-    // Reflect the flip in the returned row so the caller doesn't need
-    // to re-read D1 just to know about firstBreach.
-    row: firstBreach
-      ? { ...row, [alertedField(hitCap)]: true }
-      : row,
+    row,
   }
 }
 
-function alertedField(metric: QuotaMetric): "alertedBytes" | "alertedClassA" | "alertedClassB" {
-  switch (metric) {
-    case "bytes":
-      return "alertedBytes"
-    case "classA":
-      return "alertedClassA"
-    case "classB":
-      return "alertedClassB"
-  }
-}
-
-async function readOrZero(env: Env, today: string): Promise<DailyQuotaRow> {
+async function readRow(env: Env, today: string): Promise<DailyQuotaRow> {
   const db: Db = createDb(env)
   const [row] = await db
     .select()

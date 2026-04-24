@@ -123,7 +123,9 @@ telemetryRoutes.post("/session/:sessionId/data", async (c) => {
     // On the 0→1 latch flip (signalled by X-Quota-First-Breach), fire the
     // operator alert + audit log via ctx.waitUntil. Subsequent 429s in
     // the same UTC day carry no header and pass straight through.
-    scheduleDoAlert(c, res, user.workspaceId)
+    // Pass a clone so we can safely read .text() below without racing
+    // scheduleDoAlert's header reads.
+    scheduleDoAlert(c, res.clone(), user.workspaceId)
     return new Response(await res.text(), {
       status: 429,
       headers: {

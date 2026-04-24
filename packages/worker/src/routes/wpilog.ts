@@ -8,6 +8,7 @@ import type { Env } from "../env"
 import { chargeOrThrow, QuotaExceededError } from "../quota/daily-quota"
 import { handleQuotaExceeded } from "../quota/http"
 import {
+  getBlob,
   R2MultipartWpilogWriter,
   readPlainBlobStream,
   streamSessionBatches,
@@ -87,7 +88,15 @@ wpilogRoutes.get("/:id/wpilog", async (c) => {
     .set({ wpilogKey: key, wpilogGeneratedAt: new Date() })
     .where(eq(telemetrySessions.id, session.id))
 
-  const obj = await c.env.BLOBS.get(key)
+  let obj: R2ObjectBody | null
+  try {
+    obj = await getBlob(c.env, key)
+  } catch (err) {
+    if (err instanceof QuotaExceededError) {
+      return handleQuotaExceeded(c, err, user.workspaceId)
+    }
+    throw err
+  }
   if (!obj) return c.text("wpilog_missing_after_write", 503)
   return streamWpilogResponse(readPlainBlobStream(obj), session.sessionId)
 })

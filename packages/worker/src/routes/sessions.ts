@@ -18,6 +18,7 @@ import type { Env } from "../env"
 import { buildTree, cacheTree, loadCachedTree } from "../ingest/tree-builder"
 import { QuotaExceededError } from "../quota/daily-quota"
 import { handleQuotaExceeded } from "../quota/http"
+import { deleteBlob, listBlobs } from "../storage/r2"
 
 const DEFAULT_LIMIT = 25
 const MAX_LIMIT = 100
@@ -191,14 +192,21 @@ sessionsRoutes.delete("/:id", async (c) => {
   // rather than a dangling-pointer state (D1 gone, blobs still there).
   const prefix = batchPrefix(row.id)
   let cursor: string | undefined
-  while (true) {
-    const options: R2ListOptions = cursor ? { prefix, cursor } : { prefix }
-    const listed = await c.env.BLOBS.list(options)
-    for (const obj of listed.objects) {
-      await c.env.BLOBS.delete(obj.key)
+  try {
+    while (true) {
+      const options: R2ListOptions = cursor ? { prefix, cursor } : { prefix }
+      const listed = await listBlobs(c.env, options)
+      for (const obj of listed.objects) {
+        await deleteBlob(c.env, obj.key)
+      }
+      if (!listed.truncated) break
+      cursor = listed.cursor
     }
-    if (!listed.truncated) break
-    cursor = listed.cursor
+  } catch (err) {
+    if (err instanceof QuotaExceededError) {
+      return handleQuotaExceeded(c, err, user.workspaceId)
+    }
+    throw err
   }
 
   // session_batches rows have ON DELETE CASCADE, so the telemetry_sessions
