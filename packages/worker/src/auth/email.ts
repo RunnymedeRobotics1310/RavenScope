@@ -136,6 +136,63 @@ export async function sendOperatorAlert(
   return { ok: false, error: lastError }
 }
 
+/**
+ * Invite-email delivery (U4). Sits alongside `sendMagicLink`; same retry +
+ * backoff semantics. Subject mentions both the inviter and the workspace so
+ * recipients can recognize the message at a glance. Body calls out the 7-day
+ * expiry and an explicit "ignore if unexpected" line.
+ */
+export interface InviteEmailPayload {
+  workspaceName: string
+  inviterEmail: string
+  acceptLink: string
+}
+
+export async function sendInviteEmail(
+  config: EmailConfig,
+  to: string,
+  payload: InviteEmailPayload,
+): Promise<SendMagicLinkResult> {
+  const subject = `${payload.inviterEmail} invited you to ${payload.workspaceName} on RavenScope`
+  const text =
+    `${payload.inviterEmail} invited you to join the workspace "${payload.workspaceName}" on RavenScope.\n\n` +
+    `Click the link below to accept. It expires in 7 days.\n\n` +
+    `${payload.acceptLink}\n\n` +
+    `If you didn't expect this invite, you can safely ignore this email.`
+
+  const body = JSON.stringify({
+    from: config.from,
+    to: [to],
+    subject,
+    text,
+  })
+
+  let lastError = "unknown"
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    try {
+      const res = await fetch(RESEND_URL, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${config.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body,
+      })
+      if (res.ok) return { ok: true }
+      if (res.status >= 400 && res.status < 500) {
+        return { ok: false, error: `resend-${res.status}` }
+      }
+      lastError = `resend-${res.status}`
+    } catch (err) {
+      lastError = err instanceof Error ? `network-${err.name}` : "network-unknown"
+    }
+    if (attempt < MAX_ATTEMPTS - 1) {
+      await sleep(BASE_BACKOFF_MS * 2 ** attempt)
+    }
+  }
+  return { ok: false, error: lastError }
+}
+
 function formatMetric(metric: OperatorAlert["metric"], value: number): string {
   if (metric !== "bytes") return value.toLocaleString("en-US") + " ops"
   const mib = 1024 * 1024

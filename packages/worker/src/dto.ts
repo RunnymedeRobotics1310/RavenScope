@@ -29,6 +29,38 @@ export interface SwitchWorkspaceRequest {
   workspaceId: string
 }
 
+/* --- Invites (Unit 4) ---------------------------------------------- */
+
+export interface InviteCreateRequest {
+  email: string
+  /** Optional; defaults to 'member'. v1 rejects any other value. */
+  role?: "member"
+}
+
+export interface InviteDto {
+  id: string
+  invitedEmail: string
+  role: "member"
+  /** Unix ms. */
+  createdAt: number
+  /** Unix ms. */
+  expiresAt: number
+  invitedByUserId: string | null
+}
+
+export interface CreateInviteResponse {
+  id: string
+  invitedEmail: string
+  /** Unix ms. */
+  createdAt: number
+  /** Unix ms. */
+  expiresAt: number
+}
+
+export interface PendingInvitesResponse {
+  invites: InviteDto[]
+}
+
 export interface ApiKeyCreateRequest {
   /** 1-100 characters. Duplicates allowed. Not editable after creation. */
   name: string
