@@ -37,6 +37,17 @@ jobs:
           restore-keys: ${{ runner.os }}-pnpm-
 
       - run: pnpm install --frozen-lockfile
+
+      # Cache the AS Lite tarball across deploys -- 61 MB pulled from a
+      # GH release on every run otherwise. Key on the pinned version +
+      # checksum so a bundle bump invalidates the cache automatically.
+      - name: Cache AdvantageScope Lite bundle
+        uses: actions/cache@v4
+        with:
+          path: packages/web/.advantagescope-cache
+          key: advantagescope-${{ hashFiles('packages/web/advantagescope/version.txt', 'packages/web/advantagescope/checksums.txt') }}
+      - run: pnpm fetch:advantagescope
+
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm lint
