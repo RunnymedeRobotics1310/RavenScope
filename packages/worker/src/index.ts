@@ -1,5 +1,6 @@
 import { Hono } from "hono"
 import { httpsOnly } from "./auth/https-only"
+import { advantagescopeRoutes } from "./routes/advantagescope"
 import { apiKeyRoutes } from "./routes/api-keys"
 import { authRoutes } from "./routes/auth"
 import { inviteAcceptRoutes, workspacesRoutes } from "./routes/invites"
@@ -25,6 +26,7 @@ app.route("/api/telemetry", telemetryRoutes)
 app.route("/api/workspaces", workspacesRoutes)
 app.route("/api/workspaces", workspaceMembersRoutes)
 app.route("/api/invites", inviteAcceptRoutes)
+app.route("/v", advantagescopeRoutes)
 
 export default {
   fetch: app.fetch,

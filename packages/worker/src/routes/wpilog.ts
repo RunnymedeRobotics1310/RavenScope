@@ -1,114 +1,30 @@
-import { and, eq } from "drizzle-orm"
 import { Hono } from "hono"
 import { requireCookieUser } from "../auth/require-cookie-user"
-import { requireCookieKind } from "../auth/user"
-import { createDb } from "../db/client"
-import { telemetrySessions } from "../db/schema"
+import { loadOwnedSession } from "../auth/session-owner"
 import type { Env } from "../env"
-import { chargeOrThrow, QuotaExceededError } from "../quota/daily-quota"
-import { handleQuotaExceeded } from "../quota/http"
-import {
-  getBlob,
-  R2MultipartWpilogWriter,
-  readPlainBlobStream,
-  streamSessionBatches,
-} from "../storage/r2"
-import { wpilogKey as wpilogKeyFor } from "../storage/keys"
-import { adaptedR2Source } from "../wpilog/adapter"
-import { convertStreaming } from "../wpilog/convert"
+import { getOrBuildWpilog } from "../wpilog/get-or-build"
 
 export const wpilogRoutes = new Hono<{ Bindings: Env }>()
 wpilogRoutes.use("*", requireCookieUser)
 
 wpilogRoutes.get("/:id/wpilog", async (c) => {
-  const user = c.var.user
-  requireCookieKind(user)
   const id = c.req.param("id")
-
-  const db = createDb(c.env)
-  const [session] = await db
-    .select()
-    .from(telemetrySessions)
-    .where(
-      and(
-        eq(telemetrySessions.id, id),
-        eq(telemetrySessions.workspaceId, user.workspaceId),
-      ),
-    )
-    .limit(1)
+  const session = await loadOwnedSession(c, id)
   if (!session) return c.json({ error: "not_found" }, 404)
 
-  // Cache gate: cache is fresh when wpilog_generated_at >=
-  // COALESCE(last_batch_at, ended_at, 0).
-  const cacheMark = Math.max(
-    session.lastBatchAt ? session.lastBatchAt.getTime() : 0,
-    session.endedAt ? session.endedAt.getTime() : 0,
-  )
-  const cacheFresh =
-    !!session.wpilogKey &&
-    !!session.wpilogGeneratedAt &&
-    session.wpilogGeneratedAt.getTime() >= cacheMark
-
-  if (cacheFresh) {
-    try {
-      // Charge the cache-hit read as one Class B op.
-      await chargeOrThrow(c.env, { classB: 1 })
-    } catch (err) {
-      if (err instanceof QuotaExceededError) return handleQuotaExceeded(c, err, user.workspaceId)
-      throw err
-    }
-    const cached = await c.env.BLOBS.get(session.wpilogKey!)
-    if (cached) {
-      return streamWpilogResponse(readPlainBlobStream(cached), session.sessionId)
-    }
-    // Stale key pointing at missing object — fall through to regenerate.
-  }
-
-  // Cache miss (or broken): regenerate.
-  const key = wpilogKeyFor(session.id)
-  const writer = new R2MultipartWpilogWriter(c.env.BLOBS, key)
-  try {
-    await writer.init(c.env)
-    const factory = adaptedR2Source(
-      () => streamSessionBatches(c.env, session.id),
-      session.startedAt,
-    )
-    await convertStreaming(writer, factory, session.teamNumber ?? 0, session.sessionId)
-    await writer.finalize()
-  } catch (err) {
-    await writer.abort().catch(() => {})
-    if (err instanceof QuotaExceededError) {
-      return handleQuotaExceeded(c, err, user.workspaceId)
-    }
-    return c.text(`wpilog_generation_failed: ${String(err)}`, 503)
-  }
-
-  await db
-    .update(telemetrySessions)
-    .set({ wpilogKey: key, wpilogGeneratedAt: new Date() })
-    .where(eq(telemetrySessions.id, session.id))
-
-  let obj: R2ObjectBody | null
-  try {
-    obj = await getBlob(c.env, key)
-  } catch (err) {
-    if (err instanceof QuotaExceededError) {
-      return handleQuotaExceeded(c, err, user.workspaceId)
-    }
-    throw err
-  }
-  if (!obj) return c.text("wpilog_missing_after_write", 503)
-  return streamWpilogResponse(readPlainBlobStream(obj), session.sessionId)
+  const result = await getOrBuildWpilog(c, session)
+  if (!result.ok) return result.response
+  return streamWpilogDownload(result.body, session.sessionId)
 })
 
 /**
- * Stream a plain (uncompressed) WPILog body to the client. The caller is
- * responsible for producing the plain stream — readPlainBlobStream pipes
- * through DecompressionStream when the stored object is gzipped. No
+ * Stream a plain (uncompressed) WPILog body to the client as an
+ * attachment download. readPlainBlobStream pipes through
+ * DecompressionStream when the stored object is gzipped. No
  * Content-Encoding header on the response: clients (browsers, curl,
  * wget, AdvantageScope) always see standard uncompressed WPILog bytes.
  */
-function streamWpilogResponse(
+function streamWpilogDownload(
   body: ReadableStream<Uint8Array>,
   sessionId: string,
 ): Response {

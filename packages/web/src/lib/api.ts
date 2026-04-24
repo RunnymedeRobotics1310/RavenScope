@@ -134,6 +134,18 @@ export function sessionDownloadUrl(id: string): string {
   return `/api/sessions/${id}/wpilog`
 }
 
+/**
+ * URL for the embedded AdvantageScope Lite viewer iframe. The trailing
+ * slash matters -- AS Lite's relative fetches (logs?folder=...,
+ * assets/...) resolve against `/v/${id}/`, so they land on our worker
+ * route handlers. The `?log=` query param is consumed by AS Lite's
+ * RavenScope-applied main.ts patch to auto-open that file on boot;
+ * the name is arbitrary since /v/:id/logs/<name> ignores it.
+ */
+export function sessionViewerUrl(id: string): string {
+  return `/v/${encodeURIComponent(id)}/?log=session.wpilog`
+}
+
 export async function deleteSession(id: string): Promise<void> {
   const { status } = await request(`/api/sessions/${id}`, { method: "DELETE" })
   if (status !== 204) throw new Error(`delete ${id} returned ${status}`)

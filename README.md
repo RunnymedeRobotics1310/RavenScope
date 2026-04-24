@@ -4,8 +4,9 @@ Lightweight hosted telemetry bucket for FRC teams, built as a stripped-down
 alternative to [`RavenBrain`](https://github.com/RunnymedeRobotics1310/RavenBrain).
 Runs entirely on Cloudflare (Workers, D1, R2, Durable Objects) with magic-link
 email auth. Sign in with an email, mint an API key, point RavenLink at it,
-and your match telemetry streams into a hosted session list. Download any
-session as a `.wpilog` and open it in AdvantageScope.
+and your match telemetry streams into a hosted session list. Open any
+session directly in an embedded AdvantageScope Lite viewer, or download
+it as a `.wpilog` for use with the desktop app.
 
 - No passwords. No FRC-API calls. No database to host.
 - Free-tier friendly: one Worker, one D1, one R2, two Durable Object classes,
@@ -269,9 +270,39 @@ sign-in.
   the user/workspace on request, then the address signs up fresh.
 - **30-day cookie TTL, no server-side revocation.** A stolen cookie is
   valid until it expires, or until `SESSION_SECRET` is rotated.
-- **No AdvantageScope deep-link.** v1 ships with `.wpilog` download
-  only. A future initiative may add an `advantagescope://` launch
-  button or an in-browser AdvantageScope port.
+- **Embedded AdvantageScope Lite is beta-track.** The viewer binds to
+  AdvantageScope's `v27.x` (2027-targeted) Lite build. The pinned tag
+  lives in [`packages/web/advantagescope/version.txt`](packages/web/advantagescope/version.txt)
+  and is bumped via the workflow below. Video tab, Phoenix
+  Diagnostics, Hoot log format, XR, pop-out windows, and tab-layout
+  JSON export are inherited omissions. See
+  [`ATTRIBUTION.md`](ATTRIBUTION.md) for license + patch details.
+
+### Embedded viewer: bump AdvantageScope versions
+
+Clicking "Open viewer" on a session loads AdvantageScope Lite in an
+iframe at `/v/:id/`. The Lite bundle is built from a pinned
+AdvantageScope tag by a local developer ritual (not in CI — the full
+build needs Emscripten 4.0.12). To bump:
+
+```bash
+# one-time per machine: install emsdk 4.0.12
+git clone https://github.com/emscripten-core/emsdk.git ~/src/emsdk
+cd ~/src/emsdk && ./emsdk install 4.0.12 && ./emsdk activate 4.0.12
+source ~/src/emsdk/emsdk_env.sh
+
+# edit packages/web/advantagescope/version.txt, set `as=` and `bundle=`
+
+# build + tar + update checksums.txt
+AS_PATH=~/src/1310/AdvantageScope pnpm publish:advantagescope-bundle
+
+# sanity: re-fetch from local cache and verify
+pnpm fetch:advantagescope
+pnpm -F @ravenscope/web build
+
+# optionally: publish the tarball to a RavenScope GitHub release and
+# set release-url in version.txt so CI / fresh clones can download it.
+```
 
 ## Ergonomic target: R8 measurement
 

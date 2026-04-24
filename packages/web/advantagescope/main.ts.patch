@@ -1,0 +1,19 @@
+diff --git a/src/main/lite/main.ts b/src/main/lite/main.ts
+index def5faf..ee94ceb 100644
+--- a/src/main/lite/main.ts
++++ b/src/main/lite/main.ts
+@@ -265,6 +265,14 @@ async function initHub() {
+   if (state !== null) sendMessage(hubPort, "restore-state", JSON.parse(state));
+   sendMessage(hubPort, "show-when-ready");
+ 
++  // RavenScope deep-link: if ?log=<name> is present in the URL, auto-
++  // open that log so the embedded viewer skips the download popup.
++  // Applied as a local patch by RavenScope's publish-advantagescope-bundle.
++  const autoLog = new URLSearchParams(location.search).get("log");
++  if (autoLog !== null && autoLog.length > 0) {
++    sendMessage(hubPort, "open-files", { files: [autoLog], merge: false });
++  }
++
+   // Add cursor event handlers
+   HUB_FRAME.contentWindow?.addEventListener("contextmenu", (event) => {
+     event.preventDefault();

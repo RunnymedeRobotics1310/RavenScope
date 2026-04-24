@@ -3,6 +3,7 @@ import { Hono } from "hono"
 import { hashIp, logAudit } from "../audit/log"
 import { requireCookieUser } from "../auth/require-cookie-user"
 import { requireOwnerRole } from "../auth/require-owner-role"
+import { loadOwnedSession } from "../auth/session-owner"
 import { requireCookieKind } from "../auth/user"
 import { createDb, type Db } from "../db/client"
 import { sessionBatches, telemetrySessions } from "../db/schema"
@@ -88,20 +89,11 @@ sessionsRoutes.get("/", async (c) => {
 })
 
 sessionsRoutes.get("/:id", async (c) => {
-  const user = c.var.user
-  requireCookieKind(user)
   const id = c.req.param("id")
-
-  const db = createDb(c.env)
-  const [row] = await db
-    .select()
-    .from(telemetrySessions)
-    .where(
-      and(eq(telemetrySessions.id, id), eq(telemetrySessions.workspaceId, user.workspaceId)),
-    )
-    .limit(1)
+  const row = await loadOwnedSession(c, id)
   if (!row) return c.json({ error: "not_found" }, 404)
 
+  const db = createDb(c.env)
   const batchCount = await countBatches(db, row.id)
 
   const detail: SessionDetail = {
@@ -121,8 +113,6 @@ sessionsRoutes.get("/:id", async (c) => {
 // PATCH + DELETE are writes — Members see + download session data (R2 in
 // the plan) but cannot edit or delete it. Owner-only. See plan U6.
 sessionsRoutes.patch("/:id", requireOwnerRole, async (c) => {
-  const user = c.var.user
-  requireCookieKind(user)
   const id = c.req.param("id")
 
   const body = await c.req.json<{ fmsEventName?: string | null }>().catch(() => null)
@@ -141,16 +131,10 @@ sessionsRoutes.patch("/:id", requireOwnerRole, async (c) => {
     return c.json({ error: "no_fields_to_update" }, 400)
   }
 
-  const db = createDb(c.env)
-  const [row] = await db
-    .select()
-    .from(telemetrySessions)
-    .where(
-      and(eq(telemetrySessions.id, id), eq(telemetrySessions.workspaceId, user.workspaceId)),
-    )
-    .limit(1)
+  const row = await loadOwnedSession(c, id)
   if (!row) return c.json({ error: "not_found" }, 404)
 
+  const db = createDb(c.env)
   await db.update(telemetrySessions).set(patch).where(eq(telemetrySessions.id, row.id))
 
   const [updated] = await db
@@ -179,15 +163,10 @@ sessionsRoutes.delete("/:id", requireOwnerRole, async (c) => {
   requireCookieKind(user)
   const id = c.req.param("id")
 
-  const db = createDb(c.env)
-  const [row] = await db
-    .select()
-    .from(telemetrySessions)
-    .where(
-      and(eq(telemetrySessions.id, id), eq(telemetrySessions.workspaceId, user.workspaceId)),
-    )
-    .limit(1)
+  const row = await loadOwnedSession(c, id)
   if (!row) return c.json({ error: "not_found" }, 404)
+
+  const db = createDb(c.env)
 
   // Delete every R2 object under sessions/<id>/ — batches, tree cache, and
   // any cached wpilog. Do this before the D1 delete so a mid-operation
@@ -233,14 +212,7 @@ sessionsRoutes.get("/:id/tree", async (c) => {
   requireCookieKind(user)
   const id = c.req.param("id")
 
-  const db = createDb(c.env)
-  const [row] = await db
-    .select()
-    .from(telemetrySessions)
-    .where(
-      and(eq(telemetrySessions.id, id), eq(telemetrySessions.workspaceId, user.workspaceId)),
-    )
-    .limit(1)
+  const row = await loadOwnedSession(c, id)
   if (!row) return c.json({ error: "not_found" }, 404)
 
   try {

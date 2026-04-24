@@ -6,6 +6,7 @@ import { AcceptInvite } from "./routes/accept-invite"
 import { ApiKeysPage } from "./routes/api-keys"
 import { CheckEmail } from "./routes/check-email"
 import { SessionDetail } from "./routes/session-detail"
+import { SessionView } from "./routes/session-view"
 import { Sessions } from "./routes/sessions"
 import { SignIn } from "./routes/sign-in"
 import { WorkspaceSettings } from "./routes/workspace-settings"
@@ -28,6 +29,7 @@ export function App() {
             <Route element={<AuthGate />}>
               <Route path="/" element={<Sessions />} />
               <Route path="/sessions/:id" element={<SessionDetail />} />
+              <Route path="/sessions/:id/view" element={<SessionView />} />
               <Route path="/keys" element={<ApiKeysPage />} />
               <Route path="/workspace/settings" element={<WorkspaceSettings />} />
             </Route>
