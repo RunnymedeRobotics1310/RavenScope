@@ -1,0 +1,10 @@
+# RavenScope-bundled extras on top of AS's default asset set.
+# One asset name per line (matches a zip at
+# https://github.com/Mechanical-Advantage/AdvantageScopeAssets/releases/tag/archive-v1).
+# publish-advantagescope-bundle.mjs downloads each zip and extracts it
+# into <AS_PATH>/lite/static/bundledAssets/<name>/ so the Lite viewer
+# discovers it alongside AS's own defaults.
+#
+# Blank lines and `# ...` comments are ignored.
+Field2d_2026FRCFieldV1
+Field3d_2026FRCFieldV1

@@ -1,1 +1,1 @@
-7fb6765723aa93ac71db14cfd6e213045384d468e2c3226cac896cdadbd867c6  advantagescope-lite-v27.0.0-alpha-4.tar.gz
+faa6f4c8df1efaa19c743c7a0dafd30f6be65cf4a7c58ccfc5f936ba0ae6fbac  advantagescope-lite-v27.0.0-alpha-4-rs2.tar.gz

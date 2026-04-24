@@ -29,6 +29,7 @@ import { spawnSync } from "node:child_process"
 import { createHash } from "node:crypto"
 import { createReadStream, existsSync } from "node:fs"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { Buffer } from "node:buffer"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -36,7 +37,11 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const WEB_DIR = resolve(__dirname, "..")
 const PIN_DIR = join(WEB_DIR, "advantagescope")
 const CACHE_DIR = join(WEB_DIR, ".advantagescope-cache")
+const EXTRAS_CACHE_DIR = join(CACHE_DIR, "extras")
 const PATCH_PATH = join(PIN_DIR, "main.ts.patch")
+const EXTRA_ASSETS_PATH = join(PIN_DIR, "extra-assets.txt")
+const EXTRA_ASSETS_REPO = "Mechanical-Advantage/AdvantageScopeAssets"
+const EXTRA_ASSETS_TAG = "archive-v1"
 
 async function main() {
   const asPath = process.env.AS_PATH
@@ -73,6 +78,16 @@ async function main() {
   sh(asPath, "npm", ["run", "compile"], { ASCOPE_DISTRIBUTION: "LITE" })
   sh(asPath, "npm", ["run", "docs:build-embed"])
 
+  // Extras step: AS's bundleLiteAssets.mjs hardcodes its asset list,
+  // so any seasons/fields not in that list don't land in the tarball.
+  // We layer RavenScope-owned extras on top by downloading zips from
+  // the same AdvantageScopeAssets release and extracting them into
+  // bundledAssets/ after AS's own asset pipeline has finished.
+  const extras = await readExtraAssets()
+  if (extras.length > 0) {
+    await addExtraAssets(asPath, extras)
+  }
+
   await mkdir(CACHE_DIR, { recursive: true })
   const tarballPath = join(CACHE_DIR, `${pin.bundle}.tar.gz`)
   const liteDir = join(asPath, "lite")
@@ -95,6 +110,50 @@ async function main() {
   sh(asPath, "git", ["checkout", "--", "src/main/lite/main.ts"])
 
   printNextSteps(pin, tarballPath)
+}
+
+async function readExtraAssets() {
+  if (!existsSync(EXTRA_ASSETS_PATH)) return []
+  const text = await readFile(EXTRA_ASSETS_PATH, "utf8")
+  return text
+    .split("\n")
+    .map((l) => l.replace(/#.*$/, "").trim())
+    .filter(Boolean)
+}
+
+async function addExtraAssets(asPath, names) {
+  const liteAssetsDir = join(asPath, "lite", "static", "bundledAssets")
+  if (!existsSync(liteAssetsDir)) {
+    fail(
+      `Expected AS to have populated ${relPath(liteAssetsDir)} before the extras step.\n` +
+        `Did AS's postinstall (bundleLiteAssets.mjs) run?`,
+    )
+  }
+  await mkdir(EXTRAS_CACHE_DIR, { recursive: true })
+  for (const name of names) {
+    const zipPath = join(EXTRAS_CACHE_DIR, `${name}.zip`)
+    if (!existsSync(zipPath)) {
+      const url = `https://github.com/${EXTRA_ASSETS_REPO}/releases/download/${EXTRA_ASSETS_TAG}/${name}.zip`
+      log(`downloading extra ${name} from ${url}`)
+      const res = await fetch(url)
+      if (!res.ok) fail(`GET ${url} -> ${res.status}`)
+      await writeFile(zipPath, Buffer.from(await res.arrayBuffer()))
+    } else {
+      log(`reusing cached extra ${relPath(zipPath)}`)
+    }
+    // The zips in AdvantageScopeAssets are flat (no top-level dir), so
+    // we must extract into bundledAssets/<name>/ ourselves. AS's viewer
+    // keys off directory name to build the field selector.
+    const targetDir = join(liteAssetsDir, name)
+    await mkdir(targetDir, { recursive: true })
+    // -o overwrites silently so reruns are idempotent; -q keeps stdout
+    // quiet so the publish log stays readable.
+    const r = spawnSync("unzip", ["-q", "-o", zipPath, "-d", targetDir], {
+      stdio: "inherit",
+    })
+    if (r.status !== 0) fail(`unzip ${name}.zip exited with status ${r.status}`)
+    log(`extracted ${name} into ${relPath(targetDir)}`)
+  }
 }
 
 function ensureEmcc() {

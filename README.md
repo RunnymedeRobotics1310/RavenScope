@@ -292,6 +292,13 @@ cd ~/src/emsdk && ./emsdk install 4.0.12 && ./emsdk activate 4.0.12
 source ~/src/emsdk/emsdk_env.sh
 
 # edit packages/web/advantagescope/version.txt, set `as=` and `bundle=`
+# (bundle= is RavenScope-local; bump the tag or suffix with -rsN when
+# the AS pin is unchanged but the bundle contents differ, e.g. extras
+# were added)
+
+# optionally edit packages/web/advantagescope/extra-assets.txt to add
+# asset names from the AdvantageScopeAssets archive-v1 release that
+# aren't in AS's own bundleLiteAssets.mjs list (e.g. new seasons)
 
 # build + tar + update checksums.txt
 AS_PATH=~/src/1310/AdvantageScope pnpm publish:advantagescope-bundle
