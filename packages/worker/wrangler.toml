@@ -24,7 +24,10 @@ class_name = "RateLimitDO"
 
 [[migrations]]
 tag = "v1"
-new_classes = ["SessionIngestDO", "RateLimitDO"]
+# Free-plan Workers require SQLite-backed DOs; `new_classes` only works on
+# paid. `new_sqlite_classes` is the right migration kind for both free and
+# paid, and matches the `useSQLite: true` miniflare config in vitest.
+new_sqlite_classes = ["SessionIngestDO", "RateLimitDO"]
 
 [[d1_databases]]
 binding = "DB"
@@ -39,7 +42,7 @@ bucket_name = "ravenscope-blobs"
 # synthesizes an in-memory R2 bucket.
 
 [vars]
-EMAIL_FROM = "no-reply@ravenscope.example.com"
+EMAIL_FROM = "no-reply@ravenscope.team1310.ca"
 # Receives daily-cap breach alerts (one email per metric per day). Empty
 # string disables alerts; 429 enforcement still fires.
 OPERATOR_EMAIL = "jeff@zakr.ca"
