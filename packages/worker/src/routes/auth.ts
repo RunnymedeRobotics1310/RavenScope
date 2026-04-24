@@ -216,12 +216,15 @@ authRoutes.post("/switch-workspace", requireCookieUser, async (c) => {
     ? verifyResult.payload.exp
     : Date.now() + SESSION_TTL_SECONDS * 1000
 
+  // Preserve the original exp AND mirror its remaining lifetime into the
+  // browser Max-Age — a switch must never silently extend the session.
   const reSigned = await signSession(
     { uid: user.userId, wsid: targetWsid, exp },
     keyset,
   )
+  const maxAgeSeconds = Math.max(0, Math.floor((exp - Date.now()) / 1000))
   honoSetCookie(c, SESSION_COOKIE_NAME, reSigned, {
-    maxAge: SESSION_TTL_SECONDS,
+    maxAge: maxAgeSeconds,
     path: "/",
     secure: new URL(c.req.url).protocol === "https:",
     httpOnly: true,

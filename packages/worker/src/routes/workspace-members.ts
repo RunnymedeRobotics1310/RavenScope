@@ -158,8 +158,15 @@ workspaceMembersRoutes.post("/:wsid/leave", async (c) => {
 
   const db = createDb(c.env)
 
-  // Find all owner rows in this workspace. If the caller is the only owner,
-  // refuse — they must transfer or delete.
+  // Find all owner rows in this workspace. Two blocks are possible:
+  //  - Sole-owner: the caller is the workspace's only owner.
+  //  - Zero-owner: the DB has NO owner rows at all. This is a transient
+  //    state window during ownership transfer (see U5's transfer handler:
+  //    the batch demotes the caller, the promote fails, and the caller
+  //    fires /leave before the compensator restores ownership). Refusing
+  //    the leave here keeps a workspace from ending up permanently
+  //    ownerless via a race between transfer compensation and a
+  //    concurrent leave.
   const owners = await db
     .select({ userId: workspaceMembers.userId })
     .from(workspaceMembers)
@@ -169,6 +176,10 @@ workspaceMembersRoutes.post("/:wsid/leave", async (c) => {
         eq(workspaceMembers.role, "owner"),
       ),
     )
+
+  if (owners.length === 0) {
+    return c.json({ error: "concurrent_operation", hint: "retry" }, 409)
+  }
 
   if (user.role === "owner") {
     const otherOwners = owners.filter((o) => o.userId !== user.userId)

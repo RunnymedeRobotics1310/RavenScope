@@ -300,6 +300,48 @@ describe("POST /api/workspaces/:wsid/leave", () => {
     expect(rows).toHaveLength(1) // still there
   })
 
+  it("zero-owner workspace (transient transfer race) → 409 concurrent_operation", async () => {
+    // Simulates the tiny window inside the transfer handler between
+    // demoteSelf succeeding and the compensator restoring owner when the
+    // batch's promote side fails. A concurrent /leave in that window
+    // previously risked producing a permanently ownerless workspace; the
+    // zero-owner guard now blocks it.
+    const owner = await seedWorkspace("race@leave.local", "ws-race")
+    const db = createDb(env)
+    // Demote the caller directly — now the workspace has zero owners and
+    // one member. Mimics the transient transfer-race state.
+    await db
+      .update(workspaceMembers)
+      .set({ role: "member" })
+      .where(
+        and(
+          eq(workspaceMembers.workspaceId, owner.workspaceId),
+          eq(workspaceMembers.userId, owner.userId),
+        ),
+      )
+
+    const res = await SELF.fetch(
+      `${BASE}/api/workspaces/${owner.workspaceId}/leave`,
+      { method: "POST", headers: { Cookie: owner.cookie } },
+    )
+    expect(res.status).toBe(409)
+    const body = (await res.json()) as { error: string; hint: string }
+    expect(body.error).toBe("concurrent_operation")
+    expect(body.hint).toBe("retry")
+
+    // Membership row must survive — the guard's whole purpose.
+    const rows = await db
+      .select()
+      .from(workspaceMembers)
+      .where(
+        and(
+          eq(workspaceMembers.workspaceId, owner.workspaceId),
+          eq(workspaceMembers.userId, owner.userId),
+        ),
+      )
+    expect(rows).toHaveLength(1)
+  })
+
   it("owner with another owner row also present → 204 (other-owner branch)", async () => {
     const owner = await seedWorkspace("o1@leave.local", "ws-coowner")
     // Fabricate a second owner row directly (impossible in v1 API, but we

@@ -204,6 +204,17 @@ describe("requireCookieUser — membership-aware middleware", () => {
     // exp preserved within 1s tolerance; wsid switched.
     expect(Math.abs(verifyResult.payload.exp - originalExp)).toBeLessThan(1000)
     expect(verifyResult.payload.wsid).toBe(wsValid!.id)
+
+    // The browser Max-Age must track the remaining exp lifetime, NOT
+    // default to the full SESSION_TTL. Otherwise the cookie outlives
+    // the payload's exp in the browser and obscures session-expiry UX.
+    const setCookie = res.headers.get("Set-Cookie")
+    const maxAgeMatch = setCookie?.match(/Max-Age=(\d+)/)
+    expect(maxAgeMatch).toBeTruthy()
+    const maxAge = Number(maxAgeMatch![1])
+    // Original exp was 5 minutes out; Max-Age should be <= 300s (+ small slack).
+    expect(maxAge).toBeLessThanOrEqual(305)
+    expect(maxAge).toBeGreaterThan(0)
   })
 
   it("concurrent GETs with stale cookie converge on same fallback target", async () => {
@@ -328,6 +339,14 @@ describe("POST /api/auth/switch-workspace", () => {
     expect(audits[0]!.workspaceId).toBe(wsB!.id)
     const meta = JSON.parse(audits[0]!.metadataJson!) as Record<string, string>
     expect(meta.reason).toBe("explicit")
+
+    // Max-Age must track remaining exp (≤60s here), not reset to full TTL.
+    const setCookieHeader = res.headers.get("Set-Cookie")
+    const maxAgeMatch = setCookieHeader?.match(/Max-Age=(\d+)/)
+    expect(maxAgeMatch).toBeTruthy()
+    const maxAge = Number(maxAgeMatch![1])
+    expect(maxAge).toBeLessThanOrEqual(60)
+    expect(maxAge).toBeGreaterThan(0)
   })
 
   it("403 not_a_member when target workspace is not joined", async () => {

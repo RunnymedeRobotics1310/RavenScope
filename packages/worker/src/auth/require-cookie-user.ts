@@ -91,11 +91,14 @@ export const requireCookieUser: MiddlewareHandler<{ Bindings: Env }> = async (c,
       role: membership.role as "owner" | "member",
     })
 
-    // Key-rotation re-sign: preserve original exp, only the signing key changes.
+    // Key-rotation re-sign: preserve original exp AND its remaining lifetime.
+    // Never extend the browser's cookie window past the payload's exp —
+    // otherwise a removed member's cookie-clear on the next mutating request
+    // is silently delayed until the rolling maxAge passes.
     if (result.reSignNeeded) {
       const reSigned = await signSession({ uid: user.id, wsid: workspace.id, exp }, keyset)
       honoSetCookie(c, SESSION_COOKIE_NAME, reSigned, {
-        maxAge: SESSION_TTL_SECONDS,
+        maxAge: remainingSeconds(exp),
         path: "/",
         secure: isSecureRequest(c.req.url),
         httpOnly: true,
@@ -143,10 +146,11 @@ export const requireCookieUser: MiddlewareHandler<{ Bindings: Env }> = async (c,
     return c.json({ error: "unauthenticated" }, 401)
   }
 
-  // Re-sign preserving original exp — never extend session TTL on fallback.
+  // Re-sign preserving original exp AND its remaining lifetime — never
+  // extend the session on fallback (browser Max-Age mirrors payload exp).
   const reSigned = await signSession({ uid: user.id, wsid: newWsid, exp }, keyset)
   honoSetCookie(c, SESSION_COOKIE_NAME, reSigned, {
-    maxAge: SESSION_TTL_SECONDS,
+    maxAge: remainingSeconds(exp),
     path: "/",
     secure: isSecureRequest(c.req.url),
     httpOnly: true,
@@ -193,4 +197,14 @@ function isSecureRequest(url: string): boolean {
   } catch {
     return true
   }
+}
+
+/**
+ * Cookie Max-Age (seconds) derived from the preserved JWT `exp` (ms-since-epoch).
+ * Clamped to >=0 so an already-expired cookie serializes cleanly. Using this
+ * on every re-sign keeps the browser's cookie lifetime aligned with the
+ * payload's real expiry — a re-sign never silently extends the session.
+ */
+function remainingSeconds(exp: number): number {
+  return Math.max(0, Math.floor((exp - Date.now()) / 1000))
 }
