@@ -340,8 +340,9 @@ describe("WorkspaceSettings — member view", () => {
   it("renders a minimal Leave workspace button only", async () => {
     render(wrap(meFor("member"), <WorkspaceSettings />))
 
+    // Page heading is the workspace name (non-owners see plain text).
     expect(
-      screen.getByRole("heading", { name: /Workspace settings/ }),
+      screen.getByRole("heading", { name: /Team 1310 Shop/ }),
     ).toBeDefined()
     // Members section is not rendered.
     expect(screen.queryByRole("heading", { name: /^Members$/ })).toBeNull()

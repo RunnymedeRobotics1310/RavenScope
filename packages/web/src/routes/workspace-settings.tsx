@@ -33,7 +33,6 @@ const INVITE_ERROR_COPY: Record<string, string> = {
 
 export function WorkspaceSettings() {
   const me = useMe()
-  const qc = useQueryClient()
   if (!me.data) {
     // AuthGate handles unauthenticated callers; this is belt-and-suspenders.
     return null
@@ -41,43 +40,15 @@ export function WorkspaceSettings() {
   const active = me.data.activeWorkspace
   const isOwner = active.role === "owner"
 
-  const renameWorkspace = useMutation({
-    mutationFn: (next: string | null) => {
-      if (next === null) throw new Error("Workspace name can't be empty")
-      return updateWorkspace(active.id, { name: next })
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["me"] })
-    },
-  })
-
   return (
     <div className="min-h-screen bg-page">
       <TopNav />
       <main className="px-12 py-10 flex flex-col gap-10">
-        <header className="flex flex-col gap-1.5 max-w-3xl">
-          <p className="text-secondary text-[13px] font-display font-medium uppercase tracking-[0.08em]">
-            Workspace settings
-          </p>
-          {isOwner ? (
-            <h1 className="font-display text-[40px] font-medium leading-tight tracking-[-1px] text-primary">
-              <EditableText
-                value={active.name}
-                placeholder="Workspace name"
-                onCommit={async (next) => {
-                  await renameWorkspace.mutateAsync(next)
-                }}
-                maxLength={80}
-                className="text-[40px] font-display font-medium tracking-[-1px]"
-                ariaLabel="Edit workspace name"
-              />
-            </h1>
-          ) : (
-            <h1 className="font-display text-[40px] font-medium leading-tight tracking-[-1px] text-primary">
-              {active.name}
-            </h1>
-          )}
-        </header>
+        <SettingsHeader
+          workspaceId={active.id}
+          workspaceName={active.name}
+          isOwner={isOwner}
+        />
 
         {isOwner ? (
           <OwnerView
@@ -90,6 +61,51 @@ export function WorkspaceSettings() {
         )}
       </main>
     </div>
+  )
+}
+
+function SettingsHeader({
+  workspaceId,
+  workspaceName,
+  isOwner,
+}: {
+  workspaceId: string
+  workspaceName: string
+  isOwner: boolean
+}) {
+  const qc = useQueryClient()
+  const rename = useMutation({
+    mutationFn: (next: string | null) => {
+      if (next === null) throw new Error("Workspace name can't be empty")
+      return updateWorkspace(workspaceId, { name: next })
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["me"] })
+    },
+  })
+
+  return (
+    <header className="flex flex-col gap-1.5 max-w-3xl">
+      <p className="text-secondary text-[13px] font-display font-medium uppercase tracking-[0.08em]">
+        Workspace settings
+      </p>
+      <h1 className="font-display text-[40px] font-medium leading-tight tracking-[-1px] text-primary">
+        {isOwner ? (
+          <EditableText
+            value={workspaceName}
+            placeholder="Workspace name"
+            onCommit={async (next) => {
+              await rename.mutateAsync(next)
+            }}
+            maxLength={80}
+            className="text-[40px] font-display font-medium tracking-[-1px]"
+            ariaLabel="Edit workspace name"
+          />
+        ) : (
+          workspaceName
+        )}
+      </h1>
+    </header>
   )
 }
 
