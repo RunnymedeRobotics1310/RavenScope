@@ -14,6 +14,8 @@
     "lint": "pnpm -r lint",
     "dev:worker": "pnpm -F @ravenscope/worker dev",
     "dev:web": "pnpm -F @ravenscope/web dev",
+    "fetch:advantagescope": "pnpm -F @ravenscope/web fetch:advantagescope",
+    "publish:advantagescope-bundle": "pnpm -F @ravenscope/web publish:advantagescope-bundle",
     "format": "prettier --write ."
   },
   "devDependencies": {

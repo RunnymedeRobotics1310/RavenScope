@@ -17,3 +17,9 @@ package-lock.json
 
 # setup.sh backs up wrangler.toml on first successful run
 wrangler.toml.bak
+
+# AdvantageScope Lite bundle is fetched at install time from a tarball
+# produced by packages/web/scripts/publish-advantagescope-bundle.mjs.
+# Pinned by packages/web/advantagescope/version.txt + checksums.txt.
+packages/web/public/advantagescope/
+packages/web/.advantagescope-cache/

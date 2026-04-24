@@ -9,7 +9,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
     "lint": "tsc --noEmit",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "fetch:advantagescope": "node ./scripts/fetch-advantagescope.mjs",
+    "publish:advantagescope-bundle": "node ./scripts/publish-advantagescope-bundle.mjs"
   },
   "dependencies": {
     "@radix-ui/react-collapsible": "^1.1.12",
