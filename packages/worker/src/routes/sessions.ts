@@ -2,6 +2,7 @@ import { and, asc, desc, eq, gt, lt, sql } from "drizzle-orm"
 import { Hono } from "hono"
 import { hashIp, logAudit } from "../audit/log"
 import { requireCookieUser } from "../auth/require-cookie-user"
+import { requireOwnerRole } from "../auth/require-owner-role"
 import { requireCookieKind } from "../auth/user"
 import { createDb, type Db } from "../db/client"
 import { sessionBatches, telemetrySessions } from "../db/schema"
@@ -116,7 +117,9 @@ sessionsRoutes.get("/:id", async (c) => {
   return c.json(detail)
 })
 
-sessionsRoutes.patch("/:id", async (c) => {
+// PATCH + DELETE are writes — Members see + download session data (R2 in
+// the plan) but cannot edit or delete it. Owner-only. See plan U6.
+sessionsRoutes.patch("/:id", requireOwnerRole, async (c) => {
   const user = c.var.user
   requireCookieKind(user)
   const id = c.req.param("id")
@@ -170,7 +173,7 @@ sessionsRoutes.patch("/:id", async (c) => {
   return c.json(detail)
 })
 
-sessionsRoutes.delete("/:id", async (c) => {
+sessionsRoutes.delete("/:id", requireOwnerRole, async (c) => {
   const user = c.var.user
   requireCookieKind(user)
   const id = c.req.param("id")

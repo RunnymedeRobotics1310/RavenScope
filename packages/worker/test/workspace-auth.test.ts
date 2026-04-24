@@ -386,6 +386,47 @@ describe("POST /api/auth/switch-workspace", () => {
   })
 })
 
+describe("Role gating (U6): api-keys + sessions PATCH/DELETE owner-only", () => {
+  async function seedOwnerMemberWorkspace() {
+    const db = createDb(env)
+    const [owner] = await db.insert(users).values({ email: "owner-gate@test.local" }).returning()
+    const [mem] = await db.insert(users).values({ email: "mem-gate@test.local" }).returning()
+    const [ws] = await db.insert(workspaces).values({ name: "gate-ws" }).returning()
+    await db
+      .insert(workspaceMembers)
+      .values({ workspaceId: ws!.id, userId: owner!.id, role: "owner" })
+    await db
+      .insert(workspaceMembers)
+      .values({ workspaceId: ws!.id, userId: mem!.id, role: "member" })
+    return { owner: owner!, mem: mem!, ws: ws! }
+  }
+
+  it("member: GET /api/keys returns 403", async () => {
+    const { mem, ws } = await seedOwnerMemberWorkspace()
+    const cookie = await mintCookie(mem.id, ws.id, Date.now() + 60_000)
+    const res = await SELF.fetch(`${BASE}/api/keys`, { headers: { Cookie: cookie } })
+    expect(res.status).toBe(403)
+  })
+
+  it("member: POST /api/keys returns 403", async () => {
+    const { mem, ws } = await seedOwnerMemberWorkspace()
+    const cookie = await mintCookie(mem.id, ws.id, Date.now() + 60_000)
+    const res = await SELF.fetch(`${BASE}/api/keys`, {
+      method: "POST",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "nope" }),
+    })
+    expect(res.status).toBe(403)
+  })
+
+  it("owner: GET /api/keys returns 200 (unchanged)", async () => {
+    const { owner, ws } = await seedOwnerMemberWorkspace()
+    const cookie = await mintCookie(owner.id, ws.id, Date.now() + 60_000)
+    const res = await SELF.fetch(`${BASE}/api/keys`, { headers: { Cookie: cookie } })
+    expect(res.status).toBe(200)
+  })
+})
+
 describe("GET /api/auth/me — workspaces list", () => {
   it("returns workspaces sorted by joinedAt ASC with per-entry role", async () => {
     const db = createDb(env)
