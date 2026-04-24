@@ -23,3 +23,8 @@ wrangler.toml.bak
 # Pinned by packages/web/advantagescope/version.txt + checksums.txt.
 packages/web/public/advantagescope/
 packages/web/.advantagescope-cache/
+
+# Local agent / review artifacts (session-scoped worktrees + per-run
+# reviewer JSON dumps).
+.claude/
+.context/

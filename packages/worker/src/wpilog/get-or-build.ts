@@ -18,9 +18,10 @@ import type { OwnedSession } from "../auth/session-owner"
 import { createDb } from "../db/client"
 import { telemetrySessions } from "../db/schema"
 import type { Env } from "../env"
-import { chargeOrThrow, QuotaExceededError } from "../quota/daily-quota"
+import { QuotaExceededError } from "../quota/daily-quota"
 import { handleQuotaExceeded } from "../quota/http"
 import {
+  getBlob,
   R2MultipartWpilogWriter,
   readPlainBlobStream,
   streamSessionBatches,
@@ -54,16 +55,15 @@ export async function getOrBuildWpilog(
     session.wpilogGeneratedAt.getTime() >= cacheMark
 
   if (cacheFresh) {
+    let cached
     try {
-      // Charge the cache-hit read as one Class B op.
-      await chargeOrThrow(c.env, { classB: 1 })
+      cached = await getBlob(c.env, session.wpilogKey!)
     } catch (err) {
       if (err instanceof QuotaExceededError) {
         return { ok: false, response: handleQuotaExceeded(c, err, session.workspaceId) }
       }
       throw err
     }
-    const cached = await c.env.BLOBS.get(session.wpilogKey!)
     if (cached) {
       return { ok: true, body: readPlainBlobStream(cached), cached: true }
     }
@@ -95,7 +95,15 @@ export async function getOrBuildWpilog(
     .set({ wpilogKey: key, wpilogGeneratedAt: new Date() })
     .where(eq(telemetrySessions.id, session.id))
 
-  const obj = await c.env.BLOBS.get(key)
+  let obj
+  try {
+    obj = await getBlob(c.env, key)
+  } catch (err) {
+    if (err instanceof QuotaExceededError) {
+      return { ok: false, response: handleQuotaExceeded(c, err, session.workspaceId) }
+    }
+    throw err
+  }
   if (!obj) return { ok: false, response: c.text("wpilog_missing_after_write", 503) }
   return { ok: true, body: readPlainBlobStream(obj), cached: false }
 }

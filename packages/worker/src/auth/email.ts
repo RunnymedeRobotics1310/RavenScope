@@ -19,6 +19,10 @@ export interface EmailConfig {
 const RESEND_URL = "https://api.resend.com/emails"
 const MAX_ATTEMPTS = 3
 const BASE_BACKOFF_MS = 200
+/** Upper bound per fetch attempt. Resend's p99 is ~1-2s; 5s absorbs slow
+ *  starts while keeping a hung connection from burning the whole
+ *  `ctx.waitUntil` budget (Cloudflare caps subrequest time). */
+const FETCH_TIMEOUT_MS = 5000
 
 export async function sendMagicLink(
   config: EmailConfig,
@@ -34,35 +38,7 @@ export async function sendMagicLink(
       `${link}\n\n` +
       `If you didn't request this, you can safely ignore this email.`,
   })
-
-  let lastError = "unknown"
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    try {
-      const res = await fetch(RESEND_URL, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${config.apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body,
-      })
-      if (res.ok) return { ok: true }
-
-      // 4xx is not retryable (bad API key, bad from address, etc.).
-      if (res.status >= 400 && res.status < 500) {
-        return { ok: false, error: `resend-${res.status}` }
-      }
-      lastError = `resend-${res.status}`
-    } catch (err) {
-      lastError = err instanceof Error ? `network-${err.name}` : "network-unknown"
-    }
-
-    // Exponential backoff: 200ms, 400ms.
-    if (attempt < MAX_ATTEMPTS - 1) {
-      await sleep(BASE_BACKOFF_MS * 2 ** attempt)
-    }
-  }
-  return { ok: false, error: lastError }
+  return postToResend(config, body)
 }
 
 /**
@@ -106,6 +82,85 @@ export async function sendOperatorAlert(
   const body = JSON.stringify({
     from: config.from,
     to: [operatorEmail],
+    subject,
+    text,
+  })
+  return postToResend(config, body)
+}
+
+/**
+ * Shared Resend POST with 5s per-attempt timeout, 3-attempt exponential
+ * backoff, and 0-30% jitter. Jitter prevents concurrent isolates from
+ * retrying in lockstep during a Resend brownout (the deterministic
+ * 200/400ms cadence would otherwise compound outbound load).
+ *
+ * 4xx → terminal (bad API key, unverified sender, malformed body).
+ * 5xx / network / abort → retryable.
+ */
+async function postToResend(
+  config: EmailConfig,
+  body: string,
+): Promise<SendMagicLinkResult> {
+  let lastError = "unknown"
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+    try {
+      const res = await fetch(RESEND_URL, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${config.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body,
+        signal: controller.signal,
+      })
+      if (res.ok) return { ok: true }
+      if (res.status >= 400 && res.status < 500) {
+        return { ok: false, error: `resend-${res.status}` }
+      }
+      lastError = `resend-${res.status}`
+    } catch (err) {
+      lastError = err instanceof Error ? `network-${err.name}` : "network-unknown"
+    } finally {
+      clearTimeout(timer)
+    }
+    if (attempt < MAX_ATTEMPTS - 1) {
+      const base = BASE_BACKOFF_MS * 2 ** attempt
+      const jitter = Math.floor(Math.random() * base * 0.3)
+      await sleep(base + jitter)
+    }
+  }
+  return { ok: false, error: lastError }
+}
+
+/**
+ * Invite-email delivery (U4). Sits alongside `sendMagicLink`; same retry +
+ * backoff semantics. Subject mentions both the inviter and the workspace so
+ * recipients can recognize the message at a glance. Body calls out the 7-day
+ * expiry and an explicit "ignore if unexpected" line.
+ */
+export interface InviteEmailPayload {
+  workspaceName: string
+  inviterEmail: string
+  acceptLink: string
+}
+
+export async function sendInviteEmail(
+  config: EmailConfig,
+  to: string,
+  payload: InviteEmailPayload,
+): Promise<SendMagicLinkResult> {
+  const subject = `${payload.inviterEmail} invited you to ${payload.workspaceName} on RavenScope`
+  const text =
+    `${payload.inviterEmail} invited you to join the workspace "${payload.workspaceName}" on RavenScope.\n\n` +
+    `Click the link below to accept. It expires in 7 days.\n\n` +
+    `${payload.acceptLink}\n\n` +
+    `If you didn't expect this invite, you can safely ignore this email.`
+
+  const body = JSON.stringify({
+    from: config.from,
+    to: [to],
     subject,
     text,
   })

@@ -11,9 +11,9 @@
  *   batched in a single db.batch() so a crash midway leaves no partial rows.
  */
 
-import { and, eq } from "drizzle-orm"
+import { and, asc, eq } from "drizzle-orm"
 import type { Db } from "../db/client"
-import { loginTokens, users, workspaces } from "../db/schema"
+import { loginTokens, users, workspaceMembers, workspaces } from "../db/schema"
 
 export const TOKEN_TTL_MS = 15 * 60 * 1000 // 15 minutes
 
@@ -87,19 +87,22 @@ export async function verifyToken(
     .limit(1)
 
   if (existingUser) {
-    const [existingWorkspace] = await db
-      .select()
-      .from(workspaces)
-      .where(eq(workspaces.ownerUserId, existingUser.id))
+    // Pick the user's oldest membership. Tie-breaker on workspace_id keeps
+    // the choice deterministic under concurrent sign-ins and under backfill
+    // rows that share a created_at millisecond. U3 will replace this with
+    // "most-recently-active" once the session tracks it.
+    const [oldestMembership] = await db
+      .select({ workspaceId: workspaceMembers.workspaceId })
+      .from(workspaceMembers)
+      .where(eq(workspaceMembers.userId, existingUser.id))
+      .orderBy(asc(workspaceMembers.joinedAt), asc(workspaceMembers.workspaceId))
       .limit(1)
-    if (!existingWorkspace) {
-      // Should not happen — workspaces row is created atomically with user
-      // on first sign-in — but be defensive.
-      const name = workspaceNameFor(row.email)
+    if (oldestMembership) {
       const [ws] = await db
-        .insert(workspaces)
-        .values({ ownerUserId: existingUser.id, name })
-        .returning()
+        .select()
+        .from(workspaces)
+        .where(eq(workspaces.id, oldestMembership.workspaceId))
+        .limit(1)
       return {
         ok: true,
         userId: existingUser.id,
@@ -109,27 +112,50 @@ export async function verifyToken(
         firstSignIn: false,
       }
     }
+    // Defensive path: user exists but has no memberships. Shouldn't happen
+    // post-backfill. Create a fresh owned workspace atomically via db.batch()
+    // so a crash mid-insert leaves no partial rows.
+    const defensiveWsId = crypto.randomUUID()
+    const defensiveWsName = workspaceNameFor(row.email)
+    await db.batch([
+      db.insert(workspaces).values({ id: defensiveWsId, name: defensiveWsName }),
+      db.insert(workspaceMembers).values({
+        workspaceId: defensiveWsId,
+        userId: existingUser.id,
+        role: "owner",
+      }),
+    ])
     return {
       ok: true,
       userId: existingUser.id,
-      workspaceId: existingWorkspace.id,
-      workspaceName: existingWorkspace.name,
+      workspaceId: defensiveWsId,
+      workspaceName: defensiveWsName,
       email: row.email,
       firstSignIn: false,
     }
   }
 
-  const [newUser] = await db.insert(users).values({ email: row.email }).returning()
-  const [newWorkspace] = await db
-    .insert(workspaces)
-    .values({ ownerUserId: newUser!.id, name: workspaceNameFor(row.email) })
-    .returning()
+  // First sign-in: create user + workspace + owner membership atomically via
+  // db.batch() so a crash midway leaves no partial rows. IDs are pre-generated
+  // since batch statements cannot chain `.returning()` results across stmts.
+  const newUserId = crypto.randomUUID()
+  const newWsId = crypto.randomUUID()
+  const newWsName = workspaceNameFor(row.email)
+  await db.batch([
+    db.insert(users).values({ id: newUserId, email: row.email }),
+    db.insert(workspaces).values({ id: newWsId, name: newWsName }),
+    db.insert(workspaceMembers).values({
+      workspaceId: newWsId,
+      userId: newUserId,
+      role: "owner",
+    }),
+  ])
 
   return {
     ok: true,
-    userId: newUser!.id,
-    workspaceId: newWorkspace!.id,
-    workspaceName: newWorkspace!.name,
+    userId: newUserId,
+    workspaceId: newWsId,
+    workspaceName: newWsName,
     email: row.email,
     firstSignIn: true,
   }

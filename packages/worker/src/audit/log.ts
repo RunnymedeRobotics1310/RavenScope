@@ -11,6 +11,20 @@ export type AuditEventType =
   | "session_create"
   | "session_complete"
   | "quota_cap_hit"
+  // Workspace membership & invite lifecycle (see plan U2).
+  | "workspace.member_invited"
+  | "workspace.invite_revoked"
+  | "workspace.invite_accepted"
+  | "workspace.member_removed"
+  | "workspace.member_left"
+  | "workspace.ownership_transferred"
+  | "workspace.deleted"
+  | "workspace.renamed"
+  // Both explicit POST /switch-workspace and automatic cookie-fallback
+  // re-signs emit this event. Disambiguate via
+  // metadata.reason: 'explicit' | 'cookie_fallback'. For forensics, the
+  // audit row's workspace_id column holds the NEW (target) workspace id.
+  | "workspace.switched"
 
 export interface AuditEntry {
   eventType: AuditEventType

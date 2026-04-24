@@ -11,6 +11,8 @@ export interface CookieUser {
   workspaceId: string
   email: string
   workspaceName: string
+  /** Membership role for the active workspace. Always set by requireCookieUser. */
+  role: "owner" | "member"
 }
 
 export interface ApiKeyUser {

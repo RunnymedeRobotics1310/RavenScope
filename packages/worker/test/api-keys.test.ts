@@ -11,7 +11,14 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { generateApiKey } from "../src/auth/apikey"
 import { requireApiKeyUser } from "../src/auth/require-apikey-user"
 import { createDb } from "../src/db/client"
-import { apiKeys, auditLog, loginTokens, users, workspaces } from "../src/db/schema"
+import {
+  apiKeys,
+  auditLog,
+  loginTokens,
+  users,
+  workspaceMembers,
+  workspaces,
+} from "../src/db/schema"
 import type {
   ApiKeyCreateResponse,
   ApiKeyListResponse,
@@ -24,6 +31,7 @@ async function wipeDb() {
   await db.delete(auditLog)
   await db.delete(apiKeys)
   await db.delete(loginTokens)
+  await db.delete(workspaceMembers)
   await db.delete(workspaces)
   await db.delete(users)
 }
@@ -215,8 +223,11 @@ describe("requireApiKeyUser middleware", () => {
     const [user] = await db.insert(users).values({ email: "owner@t.local" }).returning()
     const [workspace] = await db
       .insert(workspaces)
-      .values({ ownerUserId: user!.id, name: "owner's workspace" })
+      .values({ name: "owner's workspace" })
       .returning()
+    await db
+      .insert(workspaceMembers)
+      .values({ workspaceId: workspace!.id, userId: user!.id, role: "owner" })
     const generated = await generateApiKey()
     await db.insert(apiKeys).values({
       workspaceId: workspace!.id,
@@ -244,10 +255,10 @@ describe("requireApiKeyUser middleware", () => {
   it("revoked bearer returns 401", async () => {
     const db = createDb(env)
     const [user] = await db.insert(users).values({ email: "revoked@t.local" }).returning()
-    const [workspace] = await db
-      .insert(workspaces)
-      .values({ ownerUserId: user!.id, name: "ws" })
-      .returning()
+    const [workspace] = await db.insert(workspaces).values({ name: "ws" }).returning()
+    await db
+      .insert(workspaceMembers)
+      .values({ workspaceId: workspace!.id, userId: user!.id, role: "owner" })
     const generated = await generateApiKey()
     await db.insert(apiKeys).values({
       workspaceId: workspace!.id,
@@ -308,10 +319,10 @@ describe("requireApiKeyUser middleware", () => {
   it("updates api_keys.last_used_at after a successful request", async () => {
     const db = createDb(env)
     const [user] = await db.insert(users).values({ email: "tick@t.local" }).returning()
-    const [workspace] = await db
-      .insert(workspaces)
-      .values({ ownerUserId: user!.id, name: "ws" })
-      .returning()
+    const [workspace] = await db.insert(workspaces).values({ name: "ws" }).returning()
+    await db
+      .insert(workspaceMembers)
+      .values({ workspaceId: workspace!.id, userId: user!.id, role: "owner" })
     const generated = await generateApiKey()
     const [apiKeyRow] = await db
       .insert(apiKeys)

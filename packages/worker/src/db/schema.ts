@@ -20,9 +20,12 @@ const uuid = () => crypto.randomUUID()
  * Timestamps: INTEGER columns storing ms-since-epoch; drizzle maps them to
  * Date objects via `{ mode: 'timestamp_ms' }`.
  *
- * Deletion semantics: FK onDelete=RESTRICT on all workspace/user references
- * so orphaning cannot happen by accident — see Unit 2 test scenarios.
- * session_batches cascades on session delete (batches are tightly owned).
+ * Deletion semantics: FK onDelete=RESTRICT on workspace/user references that
+ * carry business data (api_keys, telemetry_sessions) so orphaning cannot
+ * happen by accident. session_batches cascades on session delete (batches
+ * are tightly owned). workspace_members cascades on both parents — pure
+ * join-table rows with no independent existence; see plan
+ * 2026-04-23-003-feat-workspace-members-plan.md → Key Technical Decisions.
  */
 
 export const users = sqliteTable("users", {
@@ -33,11 +36,10 @@ export const users = sqliteTable("users", {
     .$defaultFn(() => new Date()),
 })
 
+// Ownership now flows through `workspace_members.role = 'owner'` — the old
+// `owner_user_id` column was dropped in migration 0002.
 export const workspaces = sqliteTable("workspaces", {
   id: text("id").primaryKey().$defaultFn(uuid),
-  ownerUserId: text("owner_user_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "restrict" }),
   name: text("name").notNull(),
   createdAt: integer("created_at", { mode: "timestamp_ms" })
     .notNull()
@@ -189,9 +191,84 @@ export const auditLog = sqliteTable(
   }),
 )
 
+export const workspaceMembers = sqliteTable(
+  "workspace_members",
+  {
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    // 'owner' | 'member' — enforced in application code.
+    role: text("role").notNull(),
+    joinedAt: integer("joined_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    // Nullable because backfilled owner rows have no inviter, and because
+    // the inviter's user row may later be deleted (FK onDelete=set null).
+    invitedByUserId: text("invited_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.workspaceId, t.userId] }),
+    // Powers "list workspaces a user belongs to" in the fallback query and
+    // `GET /api/me`. Tie-breaker on workspace_id is load-bearing for the
+    // requireCookieUser fallback determinism.
+    userJoinedIdx: index("workspace_members_user_joined_idx").on(
+      t.userId,
+      t.joinedAt,
+      t.workspaceId,
+    ),
+  }),
+)
+
+// NOTE: Drizzle-orm v0.45 cannot express partial SQLite unique indexes. The
+// `pendingUnique` index below is declared as a plain unique in the schema,
+// but the generated migration 0002 is hand-edited to add the
+// `WHERE accepted_at IS NULL AND revoked_at IS NULL` clause. If a future
+// `drizzle-kit generate` run strips that clause, re-add it by hand and
+// review the diff carefully before applying.
+export const workspaceInvites = sqliteTable(
+  "workspace_invites",
+  {
+    id: text("id").primaryKey().$defaultFn(uuid),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    invitedEmail: text("invited_email").notNull(),
+    invitedByUserId: text("invited_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    // 'member' only in v1 — reserved for future 'admin' etc.
+    role: text("role").notNull(),
+    tokenHash: text("token_hash").notNull().unique(),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    acceptedAt: integer("accepted_at", { mode: "timestamp_ms" }),
+    revokedAt: integer("revoked_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => ({
+    // Plain unique in the schema; hand-edited to partial in migration 0002.
+    pendingUnique: uniqueIndex("workspace_invites_pending_unique").on(
+      t.workspaceId,
+      t.invitedEmail,
+    ),
+    workspaceCreatedIdx: index("workspace_invites_workspace_created_idx").on(
+      t.workspaceId,
+      t.createdAt,
+    ),
+  }),
+)
+
 export const schema = {
   users,
   workspaces,
+  workspaceMembers,
+  workspaceInvites,
   loginTokens,
   apiKeys,
   telemetrySessions,

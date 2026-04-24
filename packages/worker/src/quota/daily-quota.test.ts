@@ -187,4 +187,24 @@ describe("chargeQuota — cap breach", () => {
     expect(result.retryAfter).toBeLessThanOrEqual(60)
     expect(result.retryAfter).toBeGreaterThan(0)
   })
+
+  it("concurrent racers: only one sees firstBreach=true (F5 regression)", async () => {
+    // Pre-seed at cap so the next charge will cross. Fire N concurrent
+    // charges through chargeQuota; the UPSERT+SELECT batch must ensure
+    // exactly one observes the 0→1 latch flip, even though all of them
+    // see 'over cap' in the returned row.
+    await seedRow("2026-04-23", { bytesUploaded: CAP_BYTES })
+    const N = 10
+    const results = await Promise.all(
+      Array.from({ length: N }, () => chargeQuota(env, { bytes: 1 }, now)),
+    )
+    const firstBreaches = results.filter((r) => !r.ok && r.firstBreach)
+    const overCap = results.filter((r) => !r.ok)
+    expect(overCap.length).toBe(N) // all saw the breach
+    expect(firstBreaches.length).toBe(1) // but only one is first
+    const db = createDb(env)
+    const [row] = await db.select().from(dailyQuota)
+    expect(row!.alertedBytes).toBe(1)
+    expect(row!.bytesUploaded).toBe(CAP_BYTES + N)
+  })
 })

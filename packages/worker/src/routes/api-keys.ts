@@ -3,6 +3,7 @@ import { Hono } from "hono"
 import { hashIp, logAudit } from "../audit/log"
 import { generateApiKey } from "../auth/apikey"
 import { requireCookieUser } from "../auth/require-cookie-user"
+import { requireOwnerRole } from "../auth/require-owner-role"
 import { requireCookieKind } from "../auth/user"
 import { createDb } from "../db/client"
 import { apiKeys } from "../db/schema"
@@ -14,7 +15,11 @@ import type {
 import type { Env } from "../env"
 
 export const apiKeyRoutes = new Hono<{ Bindings: Env }>()
+// API keys are operational surface — Members don't see them. Ownership is
+// enforced here (after auth) so every endpoint in this router is owner-only.
+// See plan U6.
 apiKeyRoutes.use("*", requireCookieUser)
+apiKeyRoutes.use("*", requireOwnerRole)
 
 apiKeyRoutes.post("/", async (c) => {
   const user = c.var.user
