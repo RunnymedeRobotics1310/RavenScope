@@ -8,11 +8,18 @@ import type {
   ApiKeyCreateRequest,
   ApiKeyCreateResponse,
   ApiKeyListResponse,
+  CreateInviteResponse,
+  InviteCreateRequest,
+  InviteDto,
   KeyTreeResponse,
+  MemberDto,
+  MembersResponse,
+  PendingInvitesResponse,
   RequestLinkRequest,
   SessionDetail,
   SessionListResponse,
   SwitchWorkspaceRequest,
+  TransferOwnershipRequest,
   UserMeResponse,
 } from "../../../worker/src/dto"
 
@@ -20,8 +27,10 @@ export type {
   ApiKeyCreateResponse,
   ApiKeyListItem,
   ApiKeyListResponse,
+  InviteDto,
   KeyTreeNode,
   KeyTreeResponse,
+  MemberDto,
   SessionDetail,
   SessionListItem,
   SessionListResponse,
@@ -159,4 +168,120 @@ export async function createApiKey(name: string): Promise<ApiKeyCreateResponse> 
 export async function revokeApiKey(id: string): Promise<void> {
   const { status } = await request(`/api/keys/${id}`, { method: "DELETE" })
   if (status !== 204) throw new Error(`revoke ${id} returned ${status}`)
+}
+
+/* --- Workspace members (U5) ---------------------------------------- */
+
+export async function listMembers(workspaceId: string): Promise<MemberDto[]> {
+  const { data, status } = await request<MembersResponse>(
+    `/api/workspaces/${workspaceId}/members`,
+  )
+  if (status !== 200 || !data) {
+    throw new Error(`/api/workspaces/${workspaceId}/members returned ${status}`)
+  }
+  return data.members
+}
+
+export async function removeMember(
+  workspaceId: string,
+  userId: string,
+): Promise<void> {
+  const { status } = await request(
+    `/api/workspaces/${workspaceId}/members/${userId}`,
+    { method: "DELETE" },
+  )
+  if (status !== 204) throw new Error(`remove member returned ${status}`)
+}
+
+export async function leaveWorkspace(workspaceId: string): Promise<void> {
+  const { status } = await request(`/api/workspaces/${workspaceId}/leave`, {
+    method: "POST",
+  })
+  if (status !== 204) throw new Error(`leave returned ${status}`)
+}
+
+export async function transferOwnership(
+  workspaceId: string,
+  newOwnerUserId: string,
+): Promise<void> {
+  const body: TransferOwnershipRequest = { newOwnerUserId }
+  const { status } = await request(`/api/workspaces/${workspaceId}/transfer`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  })
+  if (status !== 204) throw new Error(`transfer returned ${status}`)
+}
+
+export async function deleteWorkspace(workspaceId: string): Promise<void> {
+  const { status } = await request(`/api/workspaces/${workspaceId}`, {
+    method: "DELETE",
+  })
+  if (status !== 204) throw new Error(`delete workspace returned ${status}`)
+}
+
+/* --- Invites (U4) -------------------------------------------------- */
+
+export async function listInvites(workspaceId: string): Promise<InviteDto[]> {
+  const { data, status } = await request<PendingInvitesResponse>(
+    `/api/workspaces/${workspaceId}/invites`,
+  )
+  if (status !== 200 || !data) {
+    throw new Error(`/api/workspaces/${workspaceId}/invites returned ${status}`)
+  }
+  return data.invites
+}
+
+export async function sendInvite(
+  workspaceId: string,
+  email: string,
+): Promise<CreateInviteResponse> {
+  const body: InviteCreateRequest = { email }
+  const { data, status, response } = await request<CreateInviteResponse>(
+    `/api/workspaces/${workspaceId}/invites`,
+    { method: "POST", body: JSON.stringify(body) },
+  )
+  if (status === 201 && data) return data
+  // Bubble up structured error tag for UI branching.
+  const tag =
+    (data as { error?: string } | null)?.error ??
+    `http_${status || response.status}`
+  throw new Error(tag)
+}
+
+export async function revokeInvite(
+  workspaceId: string,
+  inviteId: string,
+): Promise<void> {
+  const { status } = await request(
+    `/api/workspaces/${workspaceId}/invites/${inviteId}`,
+    { method: "DELETE" },
+  )
+  if (status !== 204) throw new Error(`revoke invite returned ${status}`)
+}
+
+export async function resendInvite(
+  workspaceId: string,
+  inviteId: string,
+): Promise<void> {
+  const { status } = await request(
+    `/api/workspaces/${workspaceId}/invites/${inviteId}/resend`,
+    { method: "POST" },
+  )
+  if (status !== 204 && status !== 200 && status !== 202) {
+    throw new Error(`resend invite returned ${status}`)
+  }
+}
+
+export async function acceptInvite(token: string): Promise<void> {
+  // The backend 302s to `/` on success. fetch() follows redirects by default;
+  // after the redirect the final response will be the SPA's `/` (HTML) with a
+  // 200. Treat any 2xx as success. Non-2xx carries a structured {error:tag}
+  // body which we surface as Error.message for the UI to branch on.
+  const { data, status } = await request<{ error?: string }>(
+    "/api/invites/accept",
+    { method: "POST", body: JSON.stringify({ token }) },
+  )
+  if (status >= 200 && status < 300) return
+  const tag = data?.error ?? `http_${status}`
+  throw new Error(tag)
 }
