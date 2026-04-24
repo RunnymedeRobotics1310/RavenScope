@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { X } from "lucide-react"
 import { useMemo, useState, type ReactNode } from "react"
 import { Button } from "../components/Button"
+import { EditableText } from "../components/EditableText"
 import { TopNav } from "../components/TopNav"
 import { Tooltip } from "../components/Tooltip"
 import { useMe } from "../lib/auth"
@@ -16,6 +17,7 @@ import {
   revokeInvite,
   sendInvite,
   transferOwnership,
+  updateWorkspace,
   type InviteDto,
   type MemberDto,
 } from "../lib/api"
@@ -31,6 +33,7 @@ const INVITE_ERROR_COPY: Record<string, string> = {
 
 export function WorkspaceSettings() {
   const me = useMe()
+  const qc = useQueryClient()
   if (!me.data) {
     // AuthGate handles unauthenticated callers; this is belt-and-suspenders.
     return null
@@ -38,17 +41,42 @@ export function WorkspaceSettings() {
   const active = me.data.activeWorkspace
   const isOwner = active.role === "owner"
 
+  const renameWorkspace = useMutation({
+    mutationFn: (next: string | null) => {
+      if (next === null) throw new Error("Workspace name can't be empty")
+      return updateWorkspace(active.id, { name: next })
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["me"] })
+    },
+  })
+
   return (
     <div className="min-h-screen bg-page">
       <TopNav />
       <main className="px-12 py-10 flex flex-col gap-10">
         <header className="flex flex-col gap-1.5 max-w-3xl">
-          <h1 className="font-display text-[40px] font-medium leading-tight tracking-[-1px] text-primary">
+          <p className="text-secondary text-[13px] font-display font-medium uppercase tracking-[0.08em]">
             Workspace settings
-          </h1>
-          <p className="text-secondary text-[14px] leading-relaxed">
-            {active.name}
           </p>
+          {isOwner ? (
+            <h1 className="font-display text-[40px] font-medium leading-tight tracking-[-1px] text-primary">
+              <EditableText
+                value={active.name}
+                placeholder="Workspace name"
+                onCommit={async (next) => {
+                  await renameWorkspace.mutateAsync(next)
+                }}
+                maxLength={80}
+                className="text-[40px] font-display font-medium tracking-[-1px]"
+                ariaLabel="Edit workspace name"
+              />
+            </h1>
+          ) : (
+            <h1 className="font-display text-[40px] font-medium leading-tight tracking-[-1px] text-primary">
+              {active.name}
+            </h1>
+          )}
         </header>
 
         {isOwner ? (

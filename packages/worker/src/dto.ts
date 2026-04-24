@@ -80,6 +80,10 @@ export interface TransferOwnershipRequest {
   newOwnerUserId: string
 }
 
+export interface UpdateWorkspaceRequest {
+  name?: string
+}
+
 export interface ApiKeyCreateRequest {
   /** 1-100 characters. Duplicates allowed. Not editable after creation. */
   name: string

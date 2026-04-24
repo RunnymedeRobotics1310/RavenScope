@@ -20,7 +20,9 @@ import type {
   SessionListResponse,
   SwitchWorkspaceRequest,
   TransferOwnershipRequest,
+  UpdateWorkspaceRequest,
   UserMeResponse,
+  WorkspaceInfo,
 } from "../../../worker/src/dto"
 
 export type {
@@ -217,6 +219,20 @@ export async function deleteWorkspace(workspaceId: string): Promise<void> {
     method: "DELETE",
   })
   if (status !== 204) throw new Error(`delete workspace returned ${status}`)
+}
+
+export async function updateWorkspace(
+  workspaceId: string,
+  patch: UpdateWorkspaceRequest,
+): Promise<WorkspaceInfo> {
+  const { data, status } = await request<WorkspaceInfo>(
+    `/api/workspaces/${workspaceId}`,
+    { method: "PATCH", body: JSON.stringify(patch) },
+  )
+  if (status !== 200 || !data) {
+    throw new Error(`update workspace returned ${status}`)
+  }
+  return data
 }
 
 /* --- Invites (U4) -------------------------------------------------- */

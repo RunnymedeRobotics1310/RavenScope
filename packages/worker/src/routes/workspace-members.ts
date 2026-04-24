@@ -33,6 +33,8 @@ import type {
   MemberDto,
   MembersResponse,
   TransferOwnershipRequest,
+  UpdateWorkspaceRequest,
+  WorkspaceInfo,
 } from "../dto"
 import type { Env } from "../env"
 import { batchPrefix } from "../storage/keys"
@@ -303,6 +305,62 @@ workspaceMembersRoutes.post("/:wsid/transfer", requireOwnerRole, async (c) => {
   })
 
   return c.body(null, 204)
+})
+
+/* ------------------------------------ PATCH /:wsid (update workspace) */
+
+workspaceMembersRoutes.patch("/:wsid", requireOwnerRole, async (c) => {
+  const user = c.var.user
+  requireCookieKind(user)
+  const paramWsid = c.req.param("wsid")
+  if (assertActiveWsid(user.workspaceId, paramWsid) !== "ok") {
+    return c.json({ error: "forbidden" }, 403)
+  }
+
+  const body = await c.req.json<UpdateWorkspaceRequest>().catch(() => null)
+  if (!body) return c.json({ error: "invalid_body" }, 400)
+
+  const patch: Partial<typeof workspaces.$inferInsert> = {}
+  if ("name" in body) {
+    const v = body.name
+    if (typeof v !== "string") {
+      return c.json({ error: "invalid_name" }, 400)
+    }
+    const trimmed = v.trim()
+    if (trimmed.length === 0 || trimmed.length > 80) {
+      return c.json({ error: "invalid_name" }, 400)
+    }
+    patch.name = trimmed
+  }
+  if (Object.keys(patch).length === 0) {
+    return c.json({ error: "no_fields_to_update" }, 400)
+  }
+
+  const db = createDb(c.env)
+  const [existing] = await db
+    .select({ name: workspaces.name })
+    .from(workspaces)
+    .where(eq(workspaces.id, paramWsid))
+    .limit(1)
+  if (!existing) return c.json({ error: "not_found" }, 404)
+
+  await db.update(workspaces).set(patch).where(eq(workspaces.id, paramWsid))
+
+  const ipHash = await hashIp(c.req.header("CF-Connecting-IP") ?? "unknown")
+  await logAudit(db, {
+    eventType: "workspace.renamed",
+    actorUserId: user.userId,
+    workspaceId: paramWsid,
+    ipHash,
+    metadata: { old_name: existing.name, new_name: patch.name },
+  })
+
+  const response: WorkspaceInfo = {
+    id: paramWsid,
+    name: patch.name!,
+    role: user.role,
+  }
+  return c.json(response)
 })
 
 /* ------------------------------------ DELETE /:wsid (delete workspace) */

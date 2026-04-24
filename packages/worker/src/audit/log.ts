@@ -19,6 +19,7 @@ export type AuditEventType =
   | "workspace.member_left"
   | "workspace.ownership_transferred"
   | "workspace.deleted"
+  | "workspace.renamed"
   // Both explicit POST /switch-workspace and automatic cookie-fallback
   // re-signs emit this event. Disambiguate via
   // metadata.reason: 'explicit' | 'cookie_fallback'. For forensics, the
