@@ -1,5 +1,6 @@
 import { Hono } from "hono"
 import { httpsOnly } from "./auth/https-only"
+import { advantagescopeRoutes } from "./routes/advantagescope"
 import { apiKeyRoutes } from "./routes/api-keys"
 import { authRoutes } from "./routes/auth"
 import { sessionsRoutes } from "./routes/sessions"
@@ -20,6 +21,7 @@ app.route("/api/keys", apiKeyRoutes)
 app.route("/api/sessions", sessionsRoutes)
 app.route("/api/sessions", wpilogRoutes)
 app.route("/api/telemetry", telemetryRoutes)
+app.route("/v", advantagescopeRoutes)
 
 export default {
   fetch: app.fetch,
