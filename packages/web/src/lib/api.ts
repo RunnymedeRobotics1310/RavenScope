@@ -12,6 +12,7 @@ import type {
   RequestLinkRequest,
   SessionDetail,
   SessionListResponse,
+  SwitchWorkspaceRequest,
   UserMeResponse,
 } from "../../../worker/src/dto"
 
@@ -25,6 +26,7 @@ export type {
   SessionListItem,
   SessionListResponse,
   UserMeResponse,
+  WorkspaceInfo,
 } from "../../../worker/src/dto"
 
 const BASE = "" // same-origin; Vite's dev proxy forwards /api → worker
@@ -71,6 +73,17 @@ export async function requestMagicLink(email: string): Promise<{ ok: boolean; st
 
 export async function logout(): Promise<void> {
   await request("/api/auth/logout", { method: "POST" })
+}
+
+export async function switchWorkspace(workspaceId: string): Promise<void> {
+  const body: SwitchWorkspaceRequest = { workspaceId }
+  const { status } = await request("/api/auth/switch-workspace", {
+    method: "POST",
+    body: JSON.stringify(body),
+  })
+  if (status < 200 || status >= 300) {
+    throw new Error(`/api/auth/switch-workspace returned ${status}`)
+  }
 }
 
 export async function fetchSessions(params: {
