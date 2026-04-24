@@ -148,60 +148,68 @@ async function proxyStatic(
   const res = await c.env.ASSETS.fetch(new Request(rewritten.toString(), { method: "GET" }))
   const contentType = (res.headers.get("content-type") ?? "").toLowerCase()
 
-  // SPA fallback returns text/html for any missing file. Reject unless
-  // this particular request actually expected HTML (only the iframe
-  // root passes allowHtml).
-  if (!opts.allowHtml && contentType.startsWith("text/html")) {
-    return c.json({ error: "not_found" }, 404)
+  const accepted = acceptedTypesFromExt(staticPath)
+  if (accepted) {
+    // Request has a known extension. Response content-type must match
+    // at least one accepted prefix, otherwise we assume the SPA
+    // fallback swallowed a missing file and 404 instead of returning
+    // the wrong bytes.
+    const ok = accepted.some((t) => contentType.startsWith(t))
+    if (!ok) return c.json({ error: "not_found" }, 404)
+    return res
   }
 
-  const expected = expectedTypeFromExt(staticPath)
-  if (expected && !contentType.startsWith(expected)) {
+  // No known extension. Only sanity we can do is reject the SPA
+  // fallback (index.html with text/html) unless the caller is the
+  // iframe root, which intentionally asks for index.html directly.
+  if (!opts.allowHtml && contentType.startsWith("text/html")) {
     return c.json({ error: "not_found" }, 404)
   }
   return res
 }
 
-/** Expected Content-Type prefix for a given file extension. Null means
- *  "don't check" (extensionless paths or unknown extensions). */
-function expectedTypeFromExt(path: string): string | null {
+/** Accepted Content-Type prefixes for a given file extension. Null means
+ *  "don't know" (extensionless paths or unknown extensions). Multiple
+ *  prefixes cover cases where runtimes disagree on the canonical name
+ *  (e.g. `.js` is both `application/javascript` and `text/javascript`). */
+function acceptedTypesFromExt(path: string): string[] | null {
   const ext = path.toLowerCase().split("/").pop()?.split(".").slice(-1)[0] ?? ""
   switch (ext) {
     case "js":
     case "mjs":
-      return "application/javascript"
+      return ["application/javascript", "text/javascript"]
     case "css":
-      return "text/css"
+      return ["text/css"]
     case "json":
-      return "application/json"
+      return ["application/json"]
     case "html":
     case "htm":
-      return "text/html"
+      return ["text/html"]
     case "png":
-      return "image/png"
+      return ["image/png"]
     case "jpg":
     case "jpeg":
-      return "image/jpeg"
+      return ["image/jpeg"]
     case "gif":
-      return "image/gif"
+      return ["image/gif"]
     case "svg":
-      return "image/svg+xml"
+      return ["image/svg+xml"]
     case "ico":
-      return "image/"
+      return ["image/"]
     case "glb":
-      return "model/gltf-binary"
+      return ["model/gltf-binary", "application/octet-stream"]
     case "gltf":
-      return "model/gltf+json"
+      return ["model/gltf+json", "application/json"]
     case "wasm":
-      return "application/wasm"
+      return ["application/wasm"]
     case "woff":
-      return "font/woff"
+      return ["font/woff", "application/font-woff"]
     case "woff2":
-      return "font/woff2"
+      return ["font/woff2", "application/font-woff2"]
     case "ttf":
-      return "font/ttf"
+      return ["font/ttf", "font/sfnt", "application/font-sfnt"]
     case "txt":
-      return "text/plain"
+      return ["text/plain"]
     default:
       return null
   }
