@@ -1,2 +1,3 @@
 as=v27.0.0-alpha-4
 bundle=advantagescope-lite-v27.0.0-alpha-4
+release-url=https://github.com/RunnymedeRobotics1310/RavenScope/releases/download/advantagescope-lite-v27.0.0-alpha-4/advantagescope-lite-v27.0.0-alpha-4.tar.gz
