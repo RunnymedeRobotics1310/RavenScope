@@ -61,6 +61,25 @@ export interface PendingInvitesResponse {
   invites: InviteDto[]
 }
 
+/* --- Members (Unit 5) ---------------------------------------------- */
+
+export interface MemberDto {
+  userId: string
+  email: string
+  role: "owner" | "member"
+  /** Unix ms. */
+  joinedAt: number
+  invitedByUserId: string | null
+}
+
+export interface MembersResponse {
+  members: MemberDto[]
+}
+
+export interface TransferOwnershipRequest {
+  newOwnerUserId: string
+}
+
 export interface ApiKeyCreateRequest {
   /** 1-100 characters. Duplicates allowed. Not editable after creation. */
   name: string
