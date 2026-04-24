@@ -2,8 +2,10 @@ import { Hono } from "hono"
 import { httpsOnly } from "./auth/https-only"
 import { apiKeyRoutes } from "./routes/api-keys"
 import { authRoutes } from "./routes/auth"
+import { inviteAcceptRoutes, workspacesRoutes } from "./routes/invites"
 import { sessionsRoutes } from "./routes/sessions"
 import { telemetryRoutes } from "./routes/telemetry"
+import { workspaceMembersRoutes } from "./routes/workspace-members"
 import { wpilogRoutes } from "./routes/wpilog"
 import type { Env } from "./env"
 
@@ -20,6 +22,9 @@ app.route("/api/keys", apiKeyRoutes)
 app.route("/api/sessions", sessionsRoutes)
 app.route("/api/sessions", wpilogRoutes)
 app.route("/api/telemetry", telemetryRoutes)
+app.route("/api/workspaces", workspacesRoutes)
+app.route("/api/workspaces", workspaceMembersRoutes)
+app.route("/api/invites", inviteAcceptRoutes)
 
 export default {
   fetch: app.fetch,

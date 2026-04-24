@@ -2,7 +2,13 @@ import { env, fetchMock, SELF } from "cloudflare:test"
 import { eq } from "drizzle-orm"
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest"
 import { createDb } from "../src/db/client"
-import { auditLog, loginTokens, users, workspaces } from "../src/db/schema"
+import {
+  auditLog,
+  loginTokens,
+  users,
+  workspaceMembers,
+  workspaces,
+} from "../src/db/schema"
 
 /**
  * Test helpers ----------------------------------------------------------
@@ -30,6 +36,7 @@ async function wipeDb() {
   const db = createDb(env)
   await db.delete(auditLog)
   await db.delete(loginTokens)
+  await db.delete(workspaceMembers)
   await db.delete(workspaces)
   await db.delete(users)
 }
@@ -179,7 +186,16 @@ describe("GET /api/auth/verify + cookie + me + logout flow", () => {
     const w = await db.select().from(workspaces)
     expect(u).toHaveLength(1)
     expect(w).toHaveLength(1)
-    expect(w[0]!.ownerUserId).toBe(u[0]!.id)
+    // First sign-in creates a workspace_members row with role='owner' for
+    // the new user. Ownership is now expressed via the join table, not a
+    // column on workspaces.
+    const m = await db
+      .select()
+      .from(workspaceMembers)
+      .where(eq(workspaceMembers.workspaceId, w[0]!.id))
+    expect(m).toHaveLength(1)
+    expect(m[0]!.userId).toBe(u[0]!.id)
+    expect(m[0]!.role).toBe("owner")
 
     const r3 = await SELF.fetch(`${BASE}/api/auth/me`, { headers: { Cookie: cookie } })
     expect(r3.status).toBe(200)

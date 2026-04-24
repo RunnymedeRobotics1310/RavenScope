@@ -8,6 +8,7 @@ import {
   sessionBatches,
   telemetrySessions,
   users,
+  workspaceMembers,
   workspaces,
 } from "../src/db/schema"
 import { batchKey } from "../src/storage/keys"
@@ -32,10 +33,10 @@ async function seedBearer(): Promise<{
     .insert(users)
     .values({ email: `seed-${crypto.randomUUID()}@test.local` })
     .returning()
-  const [workspace] = await db
-    .insert(workspaces)
-    .values({ ownerUserId: user!.id, name: "seed" })
-    .returning()
+  const [workspace] = await db.insert(workspaces).values({ name: "seed" }).returning()
+  await db
+    .insert(workspaceMembers)
+    .values({ workspaceId: workspace!.id, userId: user!.id, role: "owner" })
   const generated = await generateApiKey()
   const [key] = await db
     .insert(apiKeys)
@@ -59,6 +60,7 @@ async function wipeDb() {
   await db.delete(sessionBatches)
   await db.delete(telemetrySessions)
   await db.delete(apiKeys)
+  await db.delete(workspaceMembers)
   await db.delete(workspaces)
   await db.delete(users)
 }

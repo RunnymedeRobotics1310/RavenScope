@@ -7,11 +7,77 @@ export interface RequestLinkRequest {
   email: string
 }
 
+export interface WorkspaceInfo {
+  id: string
+  name: string
+  role: "owner" | "member"
+}
+
 export interface UserMeResponse {
   userId: string
   email: string
+  /** Active workspace id. Mirrors `activeWorkspace.id` for backward compatibility. */
   workspaceId: string
+  /** Active workspace name. Mirrors `activeWorkspace.name` for backward compatibility. */
   workspaceName: string
+  activeWorkspace: WorkspaceInfo
+  /** All workspaces the user belongs to, sorted by joinedAt ASC then workspace_id ASC. */
+  workspaces: WorkspaceInfo[]
+}
+
+export interface SwitchWorkspaceRequest {
+  workspaceId: string
+}
+
+/* --- Invites (Unit 4) ---------------------------------------------- */
+
+export interface InviteCreateRequest {
+  email: string
+  /** Optional; defaults to 'member'. v1 rejects any other value. */
+  role?: "member"
+}
+
+export interface InviteDto {
+  id: string
+  invitedEmail: string
+  role: "member"
+  /** Unix ms. */
+  createdAt: number
+  /** Unix ms. */
+  expiresAt: number
+  invitedByUserId: string | null
+}
+
+export interface CreateInviteResponse {
+  id: string
+  invitedEmail: string
+  /** Unix ms. */
+  createdAt: number
+  /** Unix ms. */
+  expiresAt: number
+}
+
+export interface PendingInvitesResponse {
+  invites: InviteDto[]
+}
+
+/* --- Members (Unit 5) ---------------------------------------------- */
+
+export interface MemberDto {
+  userId: string
+  email: string
+  role: "owner" | "member"
+  /** Unix ms. */
+  joinedAt: number
+  invitedByUserId: string | null
+}
+
+export interface MembersResponse {
+  members: MemberDto[]
+}
+
+export interface TransferOwnershipRequest {
+  newOwnerUserId: string
 }
 
 export interface ApiKeyCreateRequest {
