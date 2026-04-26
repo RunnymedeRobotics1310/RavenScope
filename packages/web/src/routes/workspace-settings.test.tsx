@@ -59,10 +59,10 @@ beforeEach(() => {
 })
 
 function meFor(role: "owner" | "member"): UserMeResponse {
-  const active = { id: "ws-a", name: "Team 1310 Shop", role }
+  const active = { id: "ws-a", name: "Test Workspace", role }
   return {
     userId: "u-1",
-    email: "jeff@team1310.ca",
+    email: "owner@example.test",
     workspaceId: active.id,
     workspaceName: active.name,
     activeWorkspace: active,
@@ -119,27 +119,27 @@ function invite(id: string, email: string): InviteDto {
 describe("WorkspaceSettings — owner view", () => {
   it("renders all three sections with seeded data", async () => {
     seedMembers([
-      member("u-1", "jeff@team1310.ca", "owner"),
-      member("u-2", "coach@team1310.ca", "member"),
+      member("u-1", "owner@example.test", "owner"),
+      member("u-2", "member@example.test", "member"),
     ])
-    seedInvites([invite("inv-1", "student@team1310.ca")])
+    seedInvites([invite("inv-1", "invitee@example.test")])
 
     render(wrap(meFor("owner"), <WorkspaceSettings />))
 
     await waitFor(() =>
-      expect(screen.getByText("coach@team1310.ca")).toBeDefined(),
+      expect(screen.getByText("member@example.test")).toBeDefined(),
     )
     expect(screen.getByRole("heading", { name: /Members/ })).toBeDefined()
     expect(screen.getByRole("heading", { name: /Pending invites/ })).toBeDefined()
     expect(screen.getByRole("heading", { name: /Danger zone/ })).toBeDefined()
-    expect(screen.getByText("student@team1310.ca")).toBeDefined()
+    expect(screen.getByText("invitee@example.test")).toBeDefined()
   })
 
   it("Remove member: confirmation dialog → API call on confirm", async () => {
     const user = userEvent.setup()
     seedMembers([
-      member("u-1", "jeff@team1310.ca", "owner"),
-      member("u-2", "coach@team1310.ca", "member"),
+      member("u-1", "owner@example.test", "owner"),
+      member("u-2", "member@example.test", "member"),
     ])
     seedInvites([])
     mocked.removeMember.mockResolvedValue(undefined)
@@ -147,14 +147,14 @@ describe("WorkspaceSettings — owner view", () => {
     render(wrap(meFor("owner"), <WorkspaceSettings />))
 
     await waitFor(() =>
-      expect(screen.getByText("coach@team1310.ca")).toBeDefined(),
+      expect(screen.getByText("member@example.test")).toBeDefined(),
     )
     await user.click(screen.getByRole("button", { name: /^Remove$/ }))
 
     // Dialog appears.
     await waitFor(() =>
       expect(
-        screen.getByRole("dialog", { name: /Remove coach@team1310\.ca/ }),
+        screen.getByRole("dialog", { name: /Remove member@example\.test/ }),
       ).toBeDefined(),
     )
     const dialog = screen.getByRole("dialog")
@@ -168,8 +168,8 @@ describe("WorkspaceSettings — owner view", () => {
   it("Make owner: strong confirmation copy → API call", async () => {
     const user = userEvent.setup()
     seedMembers([
-      member("u-1", "jeff@team1310.ca", "owner"),
-      member("u-2", "coach@team1310.ca", "member"),
+      member("u-1", "owner@example.test", "owner"),
+      member("u-2", "member@example.test", "member"),
     ])
     seedInvites([])
     mocked.transferOwnership.mockResolvedValue(undefined)
@@ -177,7 +177,7 @@ describe("WorkspaceSettings — owner view", () => {
     render(wrap(meFor("owner"), <WorkspaceSettings />))
 
     await waitFor(() =>
-      expect(screen.getByText("coach@team1310.ca")).toBeDefined(),
+      expect(screen.getByText("member@example.test")).toBeDefined(),
     )
     await user.click(screen.getByRole("button", { name: /Make owner/ }))
 
@@ -198,13 +198,13 @@ describe("WorkspaceSettings — owner view", () => {
   })
 
   it("sole owner: Leave workspace on own row is disabled (no button, tooltip span)", async () => {
-    seedMembers([member("u-1", "jeff@team1310.ca", "owner")])
+    seedMembers([member("u-1", "owner@example.test", "owner")])
     seedInvites([])
 
     render(wrap(meFor("owner"), <WorkspaceSettings />))
 
     await waitFor(() =>
-      expect(screen.getByText(/jeff@team1310\.ca/)).toBeDefined(),
+      expect(screen.getByText(/owner@example\.test/)).toBeDefined(),
     )
     // The label "Leave workspace" appears but there is no button for it —
     // it's a disabled span wrapped in a tooltip trigger.
@@ -215,7 +215,7 @@ describe("WorkspaceSettings — owner view", () => {
 
   it("Danger zone: typing name enables Delete → API call on confirm", async () => {
     const user = userEvent.setup()
-    seedMembers([member("u-1", "jeff@team1310.ca", "owner")])
+    seedMembers([member("u-1", "owner@example.test", "owner")])
     seedInvites([])
     mocked.deleteWorkspace.mockResolvedValue(undefined)
 
@@ -230,7 +230,7 @@ describe("WorkspaceSettings — owner view", () => {
     render(wrap(meFor("owner"), <WorkspaceSettings />))
 
     await waitFor(() =>
-      expect(screen.getByText(/jeff@team1310\.ca/)).toBeDefined(),
+      expect(screen.getByText(/owner@example\.test/)).toBeDefined(),
     )
     // Open the delete dialog.
     const openBtn = screen
@@ -246,7 +246,7 @@ describe("WorkspaceSettings — owner view", () => {
     expect((confirmBtn as HTMLButtonElement).disabled).toBe(true)
 
     const input = within(dialog).getByLabelText(/Workspace name confirmation/)
-    await user.type(input, "Team 1310 Shop")
+    await user.type(input, "Test Workspace")
     expect((confirmBtn as HTMLButtonElement).disabled).toBe(false)
 
     await user.click(confirmBtn)
@@ -264,15 +264,15 @@ describe("WorkspaceSettings — owner view", () => {
 
   it("sending an invite invalidates the list so new row is fetched", async () => {
     const user = userEvent.setup()
-    seedMembers([member("u-1", "jeff@team1310.ca", "owner")])
+    seedMembers([member("u-1", "owner@example.test", "owner")])
     // First call returns empty; after mutate succeeds, react-query invalidates
     // and the second call returns the new row.
     mocked.listInvites
       .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([invite("inv-1", "coach@team1310.ca")])
+      .mockResolvedValueOnce([invite("inv-1", "member@example.test")])
     mocked.sendInvite.mockResolvedValue({
       id: "inv-1",
-      invitedEmail: "coach@team1310.ca",
+      invitedEmail: "member@example.test",
       createdAt: Date.now(),
       expiresAt: Date.now() + 7 * 864e5,
     })
@@ -282,28 +282,28 @@ describe("WorkspaceSettings — owner view", () => {
     await waitFor(() => expect(screen.getByText(/No pending invites/)).toBeDefined())
     await user.type(
       screen.getByPlaceholderText(/teammate@example\.com/),
-      "coach@team1310.ca",
+      "member@example.test",
     )
     await user.click(screen.getByRole("button", { name: /Send invite/ }))
 
     await waitFor(() =>
-      expect(mocked.sendInvite).toHaveBeenCalledWith("ws-a", "coach@team1310.ca"),
+      expect(mocked.sendInvite).toHaveBeenCalledWith("ws-a", "member@example.test"),
     )
     await waitFor(() =>
-      expect(screen.getByText("coach@team1310.ca")).toBeDefined(),
+      expect(screen.getByText("member@example.test")).toBeDefined(),
     )
   })
 
   it("revoking a pending invite: confirmation → API call", async () => {
     const user = userEvent.setup()
-    seedMembers([member("u-1", "jeff@team1310.ca", "owner")])
-    seedInvites([invite("inv-1", "coach@team1310.ca")])
+    seedMembers([member("u-1", "owner@example.test", "owner")])
+    seedInvites([invite("inv-1", "member@example.test")])
     mocked.revokeInvite.mockResolvedValue(undefined)
 
     render(wrap(meFor("owner"), <WorkspaceSettings />))
 
     await waitFor(() =>
-      expect(screen.getByText("coach@team1310.ca")).toBeDefined(),
+      expect(screen.getByText("member@example.test")).toBeDefined(),
     )
     await user.click(screen.getByRole("button", { name: /^Revoke$/ }))
     await waitFor(() => expect(screen.getByRole("dialog")).toBeDefined())
@@ -317,14 +317,14 @@ describe("WorkspaceSettings — owner view", () => {
 
   it("resending an invite fires immediately without confirmation", async () => {
     const user = userEvent.setup()
-    seedMembers([member("u-1", "jeff@team1310.ca", "owner")])
-    seedInvites([invite("inv-1", "coach@team1310.ca")])
+    seedMembers([member("u-1", "owner@example.test", "owner")])
+    seedInvites([invite("inv-1", "member@example.test")])
     mocked.resendInvite.mockResolvedValue(undefined)
 
     render(wrap(meFor("owner"), <WorkspaceSettings />))
 
     await waitFor(() =>
-      expect(screen.getByText("coach@team1310.ca")).toBeDefined(),
+      expect(screen.getByText("member@example.test")).toBeDefined(),
     )
     await user.click(screen.getByRole("button", { name: /^Resend$/ }))
 
@@ -342,7 +342,7 @@ describe("WorkspaceSettings — member view", () => {
 
     // Page heading is the workspace name (non-owners see plain text).
     expect(
-      screen.getByRole("heading", { name: /Team 1310 Shop/ }),
+      screen.getByRole("heading", { name: /Test Workspace/ }),
     ).toBeDefined()
     // Members section is not rendered.
     expect(screen.queryByRole("heading", { name: /^Members$/ })).toBeNull()

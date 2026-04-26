@@ -38,6 +38,36 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # Materialize packages/worker/wrangler.toml from the committed
+      # template. The real wrangler.toml is gitignored — each
+      # deployment owns its own database_id, EMAIL_FROM, and
+      # OPERATOR_EMAIL — so CI renders the template using repository
+      # Variables before any wrangler subcommand runs.
+      #
+      # Configure these in Settings → Secrets and variables → Actions →
+      # Variables (NOT Secrets — these aren't sensitive enough to need
+      # log masking, and Variables are easier to audit):
+      #   D1_DATABASE_ID     — UUID from `wrangler d1 list` (required)
+      #   EMAIL_FROM         — verified Resend sender (required)
+      #   OPERATOR_EMAIL     — daily-cap alert recipient ('' = disabled)
+      - name: Render wrangler.toml from template
+        env:
+          D1_DATABASE_ID: ${{ vars.D1_DATABASE_ID }}
+          EMAIL_FROM: ${{ vars.EMAIL_FROM }}
+          OPERATOR_EMAIL: ${{ vars.OPERATOR_EMAIL }}
+        run: |
+          set -euo pipefail
+          TEMPLATE=packages/worker/wrangler.toml.example
+          OUT=packages/worker/wrangler.toml
+          [[ -n "$D1_DATABASE_ID" ]] || { echo "::error::D1_DATABASE_ID variable is required"; exit 1; }
+          [[ -n "$EMAIL_FROM" ]] || { echo "::error::EMAIL_FROM variable is required"; exit 1; }
+          # OPERATOR_EMAIL may legitimately be empty (alerts disabled).
+          cp "$TEMPLATE" "$OUT"
+          sed -i "s|REPLACE_ME_AFTER_wrangler_d1_create|${D1_DATABASE_ID}|" "$OUT"
+          sed -i "s|^EMAIL_FROM = \".*\"|EMAIL_FROM = \"${EMAIL_FROM}\"|" "$OUT"
+          sed -i "s|^OPERATOR_EMAIL = \".*\"|OPERATOR_EMAIL = \"${OPERATOR_EMAIL}\"|" "$OUT"
+          echo "Rendered $OUT (database_id=$D1_DATABASE_ID, EMAIL_FROM=$EMAIL_FROM, OPERATOR_EMAIL=${OPERATOR_EMAIL:-<empty>})"
+
       # Cache the AS Lite tarball across deploys -- 61 MB pulled from a
       # GH release on every run otherwise. Key on the pinned version +
       # checksum so a bundle bump invalidates the cache automatically.

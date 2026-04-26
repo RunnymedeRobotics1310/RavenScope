@@ -21,6 +21,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WORKER_DIR="${ROOT}/packages/worker"
 WRANGLER_TOML="${WORKER_DIR}/wrangler.toml"
+WRANGLER_TEMPLATE="${WORKER_DIR}/wrangler.toml.example"
 
 # Colors — only when stderr is a tty.
 if [[ -t 2 ]]; then
@@ -46,6 +47,16 @@ command -v node >/dev/null 2>&1 || die "node not found — install Node 20+ firs
 
 # Verify the local wrangler install is usable.
 wrangler_cmd --version >/dev/null 2>&1 || die "wrangler not found locally. Run 'pnpm install' at the repo root first."
+
+# Materialize wrangler.toml from the template if it's not already there.
+# The real wrangler.toml is gitignored — each deployment owns its own
+# database_id, EMAIL_FROM, and OPERATOR_EMAIL — so a fresh clone always
+# starts from the template.
+if [[ ! -f "$WRANGLER_TOML" ]]; then
+  [[ -f "$WRANGLER_TEMPLATE" ]] || die "wrangler.toml.example missing at $WRANGLER_TEMPLATE — run from a fresh clone."
+  cp "$WRANGLER_TEMPLATE" "$WRANGLER_TOML"
+  ok "created wrangler.toml from template"
+fi
 
 wrangler_cmd whoami >/dev/null 2>&1 || die "wrangler not logged in. Run 'pnpm -F @ravenscope/worker exec wrangler login' and retry."
 
@@ -149,6 +160,26 @@ if [[ "$CURRENT_FROM" == "no-reply@ravenscope.example.com" || -z "$CURRENT_FROM"
   ok "EMAIL_FROM set to ${FROM_ADDR}"
 else
   ok "EMAIL_FROM already set to ${CURRENT_FROM}"
+fi
+
+# --- OPERATOR_EMAIL --------------------------------------------------
+
+CURRENT_OP="$(grep -E '^OPERATOR_EMAIL' "$WRANGLER_TOML" | sed -E 's/.*"([^"]*)".*/\1/' || true)"
+if [[ -z "$CURRENT_OP" ]]; then
+  printf "\n${DIM}Enter the operator email address that should receive daily-cap${RESET}\n" >&2
+  printf "${DIM}breach alerts (one email per metric per day). Leave blank to${RESET}\n" >&2
+  printf "${DIM}disable alerts entirely — 429 enforcement still fires either way.${RESET}\n" >&2
+  printf "Operator email (blank = disabled): " >&2
+  read -r OP_ADDR
+  if [[ -n "$OP_ADDR" ]]; then
+    sed -i.tmp "s|^OPERATOR_EMAIL = \".*\"|OPERATOR_EMAIL = \"${OP_ADDR}\"|" "$WRANGLER_TOML"
+    rm "${WRANGLER_TOML}.tmp"
+    ok "OPERATOR_EMAIL set to ${OP_ADDR}"
+  else
+    ok "OPERATOR_EMAIL left blank (alerts disabled)"
+  fi
+else
+  ok "OPERATOR_EMAIL already set to ${CURRENT_OP}"
 fi
 
 # --- final summary ---------------------------------------------------

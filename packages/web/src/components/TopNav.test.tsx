@@ -29,14 +29,14 @@ function wrap(me: UserMeResponse | null, ui: ReactNode) {
 function meResponse(overrides: Partial<UserMeResponse> = {}): UserMeResponse {
   const active = overrides.activeWorkspace ?? {
     id: "ws-a",
-    name: "Team 1310 Shop",
+    name: "Test Workspace",
     role: "owner" as const,
   }
   const workspaces =
     overrides.workspaces ?? ([active] as UserMeResponse["workspaces"])
   return {
     userId: "u-1",
-    email: "jeff@team1310.ca",
+    email: "owner@example.test",
     workspaceId: active.id,
     workspaceName: active.name,
     activeWorkspace: active,
@@ -61,9 +61,9 @@ describe("TopNav", () => {
   it("owner with 2 workspaces: dropdown lists both, active one is checked, role badges shown, API Keys tab present", async () => {
     const user = userEvent.setup()
     const me = meResponse({
-      activeWorkspace: { id: "ws-a", name: "Team 1310 Shop", role: "owner" },
+      activeWorkspace: { id: "ws-a", name: "Test Workspace", role: "owner" },
       workspaces: [
-        { id: "ws-a", name: "Team 1310 Shop", role: "owner" },
+        { id: "ws-a", name: "Test Workspace", role: "owner" },
         { id: "ws-b", name: "Team 254 Scouting", role: "member" },
       ],
     })
@@ -77,7 +77,7 @@ describe("TopNav", () => {
 
     await waitFor(() => {
       // Both workspace entries appear in the menu.
-      expect(screen.getByRole("menuitem", { name: /Team 1310 Shop/i })).toBeDefined()
+      expect(screen.getByRole("menuitem", { name: /Test Workspace/i })).toBeDefined()
       expect(screen.getByRole("menuitem", { name: /Team 254 Scouting/i })).toBeDefined()
     })
     // Role badges.
@@ -85,7 +85,7 @@ describe("TopNav", () => {
     expect(screen.getByText("Member")).toBeDefined()
 
     // The active one has a check-mark (lucide-check renders an <svg class="lucide-check">).
-    const activeItem = screen.getByRole("menuitem", { name: /Team 1310 Shop/i })
+    const activeItem = screen.getByRole("menuitem", { name: /Test Workspace/i })
     expect(activeItem.querySelector("svg")).not.toBeNull()
     // The inactive entry has no check-mark svg.
     const inactiveItem = screen.getByRole("menuitem", { name: /Team 254 Scouting/i })
@@ -94,8 +94,8 @@ describe("TopNav", () => {
 
   it("member: API Keys nav tab is absent; Sessions tab present", () => {
     const me = meResponse({
-      activeWorkspace: { id: "ws-a", name: "Team 1310 Shop", role: "member" },
-      workspaces: [{ id: "ws-a", name: "Team 1310 Shop", role: "member" }],
+      activeWorkspace: { id: "ws-a", name: "Test Workspace", role: "member" },
+      workspaces: [{ id: "ws-a", name: "Test Workspace", role: "member" }],
     })
     render(wrap(me, <TopNav />))
 
@@ -138,9 +138,9 @@ describe("TopNav", () => {
     })
 
     const me = meResponse({
-      activeWorkspace: { id: "ws-a", name: "Team 1310 Shop", role: "owner" },
+      activeWorkspace: { id: "ws-a", name: "Test Workspace", role: "owner" },
       workspaces: [
-        { id: "ws-a", name: "Team 1310 Shop", role: "owner" },
+        { id: "ws-a", name: "Test Workspace", role: "owner" },
         { id: "ws-b", name: "Team 254 Scouting", role: "member" },
       ],
     })

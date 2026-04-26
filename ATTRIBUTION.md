@@ -40,17 +40,41 @@ AdvantageScope is distributed under a BSD-3-Clause-style license:
 
 ### Local modifications
 
-RavenScope applies one ~8-line patch to AdvantageScope's source during
-the bundle build, committed at
+RavenScope applies a single patch to AdvantageScope Lite's outer shell
+(`src/main/lite/main.ts`) during the bundle build, committed at
 [`packages/web/advantagescope/main.ts.patch`](packages/web/advantagescope/main.ts.patch).
-The patch adds a `?log=<name>` URL query parameter to AdvantageScope
-Lite's `initHub()` so that the session viewer can deep-link directly
-into a single log without the user interacting with the download
-popup. Applied at build time by
+Applied at build time by
 [`packages/web/scripts/publish-advantagescope-bundle.mjs`](packages/web/scripts/publish-advantagescope-bundle.mjs).
 
-The patch is non-invasive and upstreamable; when AdvantageScope ships
-native URL-based auto-open support, the patch will be removed.
+The patch adds RavenScope-specific behavior to the outer AS shell
+without modifying AdvantageScope's hub or any tab/feature code:
+
+1. **`?log=<name>` URL auto-open.** Reads the `log` query parameter
+   on `initHub()` and dispatches AS Lite's `open-files` message so
+   the embedded viewer skips the download popup and lands directly
+   on the requested log.
+2. **Server-authoritative viewer-layout bootstrap.** Replaces AS
+   Lite's `localStorage`-based state restore with a fetch against
+   RavenScope's `/api/me/viewer-layout` endpoint. The user's chosen
+   default layout (or last-used state) loads on every device,
+   browser, and incognito session — surviving Safari ITP eviction
+   and storage-quota churn that otherwise reset the layout. Falls
+   back to the original `localStorage` path on fetch failure.
+3. **Debounced last-used capture.** Hooks the existing `save-state`
+   message handler to PUT the captured `HubState` to
+   `/api/me/viewer-layout/last-used` after 2 seconds of quiet, plus
+   a `pagehide` `sendBeacon` flush so the final state survives a
+   tab close.
+4. **Cross-frame postMessage bridge.** Installs a same-origin-only
+   `ravenscope:viewer` postMessage listener so the RavenScope SPA
+   chrome above the iframe can capture the current state ("Save
+   layout") or push a new state ("Load layout") without a page
+   reload.
+
+The patch hooks AdvantageScope's existing message ports and storage
+seams without altering any AdvantageScope feature. Each addition is
+independently upstreamable; any of them being adopted by AdvantageScope
+upstream would shrink the local patch.
 
 The pinned AdvantageScope release is recorded in
 [`packages/web/advantagescope/version.txt`](packages/web/advantagescope/version.txt).
@@ -74,6 +98,13 @@ joystick layouts) are downloaded from the
 during AdvantageScope's install step. RavenScope then redistributes
 these assets unchanged under
 `packages/web/public/advantagescope/bundledAssets/`.
+
+In addition, RavenScope's
+[`packages/web/advantagescope/extra-assets.txt`](packages/web/advantagescope/extra-assets.txt)
+lists further asset names (e.g. `Field2d_2026FRCFieldV1`,
+`Field3d_2026FRCFieldV1`) that the publish script downloads from the
+same `archive-v1` release and includes in the bundle. These extras
+are redistributed unchanged alongside the upstream defaults.
 
 Licenses for individual asset files are carried per-asset in their
 respective `config.json` (field `sourceUrl`) or alongside each asset

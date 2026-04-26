@@ -1,3 +1,14 @@
+# Template for packages/worker/wrangler.toml. The real wrangler.toml
+# is gitignored so each deployment owns its own database_id,
+# EMAIL_FROM, and OPERATOR_EMAIL. Two ways to materialize it:
+#
+#   - Local: run scripts/setup.sh — copies this template to
+#     wrangler.toml (if missing) and prompts for each placeholder
+#     value.
+#   - CI: .github/workflows/deploy.yml renders this template into
+#     wrangler.toml using repository Variables (D1_DATABASE_ID,
+#     EMAIL_FROM, OPERATOR_EMAIL) before invoking wrangler deploy.
+
 name = "ravenscope"
 main = "src/index.ts"
 compatibility_date = "2026-04-17"
@@ -33,7 +44,7 @@ new_sqlite_classes = ["SessionIngestDO", "RateLimitDO"]
 [[d1_databases]]
 binding = "DB"
 database_name = "ravenscope"
-database_id = "b6df4937-2c98-4a34-ba6c-39cff77acbf9"
+database_id = "REPLACE_ME_AFTER_wrangler_d1_create"
 migrations_dir = "migrations"
 
 [[r2_buckets]]
@@ -43,10 +54,14 @@ bucket_name = "ravenscope-blobs"
 # synthesizes an in-memory R2 bucket.
 
 [vars]
-EMAIL_FROM = "no-reply@ravenscope.team1310.ca"
+# Set by setup.sh from a Resend-verified sender domain. The
+# `…example.com` placeholder is a sentinel that triggers the prompt;
+# don't deploy with this committed value.
+EMAIL_FROM = "no-reply@ravenscope.example.com"
 # Receives daily-cap breach alerts (one email per metric per day). Empty
-# string disables alerts; 429 enforcement still fires.
-OPERATOR_EMAIL = "jeff@zakr.ca"
+# string disables alerts; 429 enforcement still fires. Set per-deployment
+# by setup.sh (or leave empty if you don't want alerts).
+OPERATOR_EMAIL = ""
 
 # Secrets (set via `wrangler secret put`):
 #   SESSION_SECRET — JSON map {"v1":"<32-byte-base64>"}

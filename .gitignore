@@ -15,8 +15,19 @@ vite.config.ts.timestamp-*.mjs
 vite.config.js.timestamp-*.mjs
 package-lock.json
 
+# Per-deployment Worker config. The committed source of truth is
+# packages/worker/wrangler.toml.example; setup.sh (locally) and
+# .github/workflows/deploy.yml (in CI) materialize wrangler.toml from
+# it with the deployment's database_id / EMAIL_FROM / OPERATOR_EMAIL.
+packages/worker/wrangler.toml
+
 # setup.sh backs up wrangler.toml on first successful run
 wrangler.toml.bak
+
+# Curl/HTTPie cookie jar files. Frequently created during local-dev API
+# probing; never want them tracked even when bound to localhost.
+cookies.txt
+cookies-*.txt
 
 # AdvantageScope Lite bundle is fetched at install time from a tarball
 # produced by packages/web/scripts/publish-advantagescope-bundle.mjs.

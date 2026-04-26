@@ -31,6 +31,22 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # The real packages/worker/wrangler.toml is gitignored; CI
+      # materializes a syntactically-valid stand-in from the committed
+      # template. Values are deliberately fake — pnpm build runs
+      # `wrangler deploy --dry-run` which only validates parse + types,
+      # not Cloudflare account state. Forks running this workflow on
+      # PRs don't have access to repo Variables, so we don't read them
+      # here either; deploy.yml is the only workflow that touches real
+      # values.
+      - name: Render wrangler.toml stub for build
+        run: |
+          set -euo pipefail
+          TEMPLATE=packages/worker/wrangler.toml.example
+          OUT=packages/worker/wrangler.toml
+          cp "$TEMPLATE" "$OUT"
+          sed -i "s|REPLACE_ME_AFTER_wrangler_d1_create|00000000-0000-0000-0000-000000000000|" "$OUT"
+
       # Cache the AS Lite tarball across runs -- 61 MB pulled from a GH
       # release on every run otherwise. Key on the pinned version +
       # checksum so a bundle bump invalidates the cache automatically.
