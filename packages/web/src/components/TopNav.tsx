@@ -36,7 +36,11 @@ export function TopNav() {
   return (
     <header className="sticky top-0 z-10 flex items-center justify-between h-16 px-8 bg-page border-b">
       <div className="flex items-center gap-10">
-        <Link to="/" className="flex items-center gap-2">
+        <Link
+          to="/"
+          className="flex items-center gap-2"
+          title={`RavenScope ${__APP_VERSION__}`}
+        >
           <span className="w-3.5 h-3.5 bg-accent" aria-hidden />
           <span className="font-display text-[18px] font-semibold text-primary">
             RavenScope
