@@ -41,6 +41,24 @@ No passwords. No database to host. No desktop install. Free for FRC teams.
 - **Audit log** — sign-ins, invites, and ownership changes are
   recorded for accountability.
 
+## What it looks like
+
+**Sessions list — every match your team uploaded, newest first.**
+
+![Sessions list — newest first, with event name and entry count per session](docs/assets/1-RavenScope-Sessions.png)
+
+**Session detail — drill into a session's metadata and key tree.**
+Open the embedded AdvantageScope viewer, download a `.wpilog`, or
+delete the session.
+
+![Session detail — metadata header, key tree, and Open viewer / Download / Delete actions](docs/assets/2-RavenScope-SessionDetail.png)
+
+**Embedded AdvantageScope viewer — full-bleed AdvantageScope Lite
+in your browser, no desktop install.** Saved layouts apply with one
+click; each user picks their own default.
+
+![Embedded AdvantageScope viewer with a line graph of shooter RPMs across multiple fields](docs/assets/3-RavenScope-AdvantageScope.png)
+
 ## Getting started
 
 If you only want to view your team's matches, you don't need to install
